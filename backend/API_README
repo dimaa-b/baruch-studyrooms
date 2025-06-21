@@ -1,0 +1,98 @@
+Baruch Study Room Booker API
+
+1. Get Room Availability
+
+Retrieves a list of all available group study rooms, grouped by room ID, for a given date.
+
+Endpoint: /api/availability
+
+Method: GET
+
+URL Parameters:
+
+date (required): The date you want to check availability for, in YYYY-MM-DD format.
+
+Example Request:
+
+Generated bash
+curl "https://your-api-domain.com/api/availability?date=2025-06-24"
+
+
+Success Response (200 OK):
+Returns a JSON object where keys are the itemId (room ID) and values are an array of available slots for that room.
+
+Generated json
+{
+  "142254": [
+    {
+      "start": "2025-06-24 09:00:00",
+      "end": "2025-06-24 10:00:00",
+      "itemId": 142254,
+      "checksum": "fbb880629005f2552091a78d3482b460",
+      "displayTime": "9:00 AM"
+    },
+    {
+      "start": "2025-06-24 10:00:00",
+      "end": "2025-06-24 11:00:00",
+      "itemId": 142254,
+      "checksum": "a342ac53b8cfc599860b04ddfe574296",
+      "displayTime": "10:00 AM"
+    }
+  ],
+  "142255": [
+    {
+      "start": "2025-06-24 09:00:00",
+      "end": "2025-06-24 10:00:00",
+      "itemId": 142255,
+      "checksum": "a581724969c6925b64f4c6bf73e26f31",
+      "displayTime": "9:00 AM"
+    }
+  ]
+}
+
+Note: Slots with a "className" property (e.g., "s-lc-eq-pending") are considered unavailable and should be styled accordingly on the frontend.
+
+2. Book a Room
+
+Submits a booking request for a specific room and time slot. This endpoint performs the entire 4-step booking process with the official Baruch API.
+
+Endpoint: /api/book
+
+Method: POST
+
+Headers:
+
+Content-Type: application/json
+
+Request Body (JSON):
+
+Generated json
+{
+  "date": "2025-06-24",
+  "roomId": "142254",
+  "startTime": "09:00:00",
+  "firstName": "",
+  "lastName": "",
+  "email": ""
+}
+
+date: The desired date in YYYY-MM-DD format.
+
+roomId: The itemId of the room, as a string.
+
+startTime: The start time of the slot in HH:MM:SS format.
+
+firstName: The user's first name.
+
+lastName: The user's last name.
+
+email: The user's email. Must be a valid @baruchmail.cuny.edu or @spsmail.cuny.edu address.
+
+Success Response (200 OK):
+Indicates that the booking request was successfully submitted and is now pending email confirmation.
+
+Generated json
+{
+  "success": true,
+  "message": "Booking is pending! Check your email."
+}
