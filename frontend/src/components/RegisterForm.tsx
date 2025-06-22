@@ -10,9 +10,7 @@ const RegisterForm = ({ onSwitchToLogin, onClose }: RegisterFormProps) => {
   const { register } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
-    username: '',
     password: '',
-    confirmPassword: '',
     firstName: '',
     lastName: '',
   });
@@ -30,11 +28,6 @@ const RegisterForm = ({ onSwitchToLogin, onClose }: RegisterFormProps) => {
   };
 
   const validateForm = () => {
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
-      return false;
-    }
-
     if (formData.password.length < 8) {
       setError('Password must be at least 8 characters long');
       return false;
@@ -60,8 +53,7 @@ const RegisterForm = ({ onSwitchToLogin, onClose }: RegisterFormProps) => {
     }
 
     try {
-      const { confirmPassword, ...registrationData } = formData;
-      const result = await register(registrationData);
+      const result = await register(formData);
       
       if (result.success) {
         setSuccess('Registration successful! Please sign in with your credentials.');
@@ -79,26 +71,24 @@ const RegisterForm = ({ onSwitchToLogin, onClose }: RegisterFormProps) => {
   };
 
   return (
-    <div className="max-w-md mx-auto">
-      <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">Create Account</h2>
-      
+    <div className="w-full">
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
           <p className="text-red-800 text-sm">{error}</p>
         </div>
       )}
 
       {success && (
-        <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-md">
+        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-xl">
           <p className="text-green-800 text-sm">{success}</p>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-1">
-              First Name
+            <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-2">
+              first name
             </label>
             <input
               type="text"
@@ -107,14 +97,14 @@ const RegisterForm = ({ onSwitchToLogin, onClose }: RegisterFormProps) => {
               value={formData.firstName}
               onChange={handleChange}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-              placeholder="First name"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:border-[#1B38E2] transition-colors"
+              placeholder="first name"
             />
           </div>
 
           <div>
-            <label htmlFor="lastName" className="block text-sm font-medium text-gray-700 mb-1">
-              Last Name
+            <label htmlFor="lastName" className="block text-sm font-medium text-gray-700 mb-2">
+              last name
             </label>
             <input
               type="text"
@@ -123,15 +113,15 @@ const RegisterForm = ({ onSwitchToLogin, onClose }: RegisterFormProps) => {
               value={formData.lastName}
               onChange={handleChange}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-              placeholder="Last name"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:border-[#1B38E2] transition-colors"
+              placeholder="last name"
             />
           </div>
         </div>
 
         <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
-            Email Address
+          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+            email address
           </label>
           <input
             type="email"
@@ -140,33 +130,17 @@ const RegisterForm = ({ onSwitchToLogin, onClose }: RegisterFormProps) => {
             value={formData.email}
             onChange={handleChange}
             required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+            className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:border-[#1B38E2] transition-colors"
             placeholder="your.email@baruchmail.cuny.edu"
           />
-          <p className="text-xs text-gray-500 mt-1">
-            Must be a Baruch or CUNY SPS email address
+          <p className="text-xs text-gray-500 mt-2">
+            must be a baruch or cuny sps email address
           </p>
         </div>
 
         <div>
-          <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
-            Username
-          </label>
-          <input
-            type="text"
-            id="username"
-            name="username"
-            value={formData.username}
-            onChange={handleChange}
-            required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            placeholder="Choose a username"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
-            Password
+          <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+            password
           </label>
           <input
             type="password"
@@ -175,47 +149,31 @@ const RegisterForm = ({ onSwitchToLogin, onClose }: RegisterFormProps) => {
             value={formData.password}
             onChange={handleChange}
             required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            placeholder="Create a password"
+            className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:border-[#1B38E2] transition-colors"
+            placeholder="create a password"
           />
-          <p className="text-xs text-gray-500 mt-1">
-            Must be at least 8 characters with uppercase, lowercase, and number
+          <p className="text-xs text-gray-500 mt-2">
+            must be at least 8 characters
           </p>
-        </div>
-
-        <div>
-          <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-1">
-            Confirm Password
-          </label>
-          <input
-            type="password"
-            id="confirmPassword"
-            name="confirmPassword"
-            value={formData.confirmPassword}
-            onChange={handleChange}
-            required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            placeholder="Confirm your password"
-          />
         </div>
 
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-[#1B38E2] text-white py-3 px-4 rounded-xl hover:bg-[#1530c7] focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
         >
-          {isLoading ? 'Creating Account...' : 'Create Account'}
+          {isLoading ? 'creating account...' : 'create account'}
         </button>
       </form>
 
-      <div className="mt-6 text-center">
+      <div className="mt-8 text-center">
         <p className="text-sm text-gray-600">
-          Already have an account?{' '}
+          already have an account?{' '}
           <button
             onClick={onSwitchToLogin}
-            className="text-indigo-600 hover:text-indigo-500 font-medium"
+            className="text-[#1B38E2] hover:text-[#1530c7] font-medium transition-colors"
           >
-            Sign in
+            sign in
           </button>
         </p>
       </div>

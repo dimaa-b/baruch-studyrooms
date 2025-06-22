@@ -13,7 +13,6 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<{ success: boolean; message: string }>;
   register: (userData: {
     email: string;
-    username: string;
     password: string;
     firstName: string;
     lastName: string;
@@ -94,7 +93,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const register = async (userData: {
     email: string;
-    username: string;
     password: string;
     firstName: string;
     lastName: string;

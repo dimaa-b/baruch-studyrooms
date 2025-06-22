@@ -62,15 +62,9 @@ class AuthManager:
         return re.match(email_pattern, email) is not None
     
     def validate_password(self, password):
-        """Validate password strength"""
+        """Validate password strength - simplified for minimal friction"""
         if len(password) < 8:
             return False, "Password must be at least 8 characters long"
-        if not re.search(r'[A-Z]', password):
-            return False, "Password must contain at least one uppercase letter"
-        if not re.search(r'[a-z]', password):
-            return False, "Password must contain at least one lowercase letter"
-        if not re.search(r'\d', password):
-            return False, "Password must contain at least one number"
         return True, "Password is valid"
     
     def hash_password(self, password):
@@ -86,7 +80,7 @@ class AuthManager:
         """Generate a secure random session token"""
         return secrets.token_urlsafe(32)
     
-    def register_user(self, email, username, password, first_name, last_name):
+    def register_user(self, email, password, first_name, last_name):
         """Register a new user"""
         try:
             self._ensure_connection()
@@ -97,6 +91,9 @@ class AuthManager:
         if not self.validate_email(email):
             return {"success": False, "message": "Invalid email. Must be a Baruch or CUNY SPS email address."}
         
+        # Generate username from email (part before @)
+        username = email.split('@')[0]
+        
         # Validate password
         is_valid, message = self.validate_password(password)
         if not is_valid:
@@ -106,8 +103,12 @@ class AuthManager:
         if self.users.find_one({"email": email}):
             return {"success": False, "message": "User with this email already exists"}
         
-        if self.users.find_one({"username": username}):
-            return {"success": False, "message": "Username already taken"}
+        # Check if auto-generated username conflicts (unlikely but possible)
+        counter = 1
+        original_username = username
+        while self.users.find_one({"username": username}):
+            username = f"{original_username}{counter}"
+            counter += 1
         
         try:
             # Create new user

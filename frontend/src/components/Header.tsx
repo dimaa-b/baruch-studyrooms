@@ -34,7 +34,7 @@ const Header = () => {
     <>
       {/* Floating Header */}
       <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-50 w-11/12 max-w-5xl">
-        <header className="bg-gray-100 backdrop-blur-md bg-opacity-90 rounded-full shadow-lg border border-gray-200">
+        <header className="bg-gray-100 backdrop-blur-md bg-opacity-90 rounded-full shadow-lg border-2 border-black">
           <div className="px-8 py-4">
             <div className="flex justify-between items-center">
               {/* Logo/Brand */}

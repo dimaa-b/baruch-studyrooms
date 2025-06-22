@@ -194,14 +194,13 @@ def register():
         )
 
     data = request.json
-    required_fields = ["email", "username", "password", "firstName", "lastName"]
+    required_fields = ["email", "password", "firstName", "lastName"]
     for field in required_fields:
         if field not in data or not data[field].strip():
             return jsonify({"error": f"Missing required field: {field}"}), 400
 
     result = auth_manager.register_user(
         email=data["email"].strip().lower(),
-        username=data["username"].strip(),
         password=data["password"],
         first_name=data["firstName"].strip(),
         last_name=data["lastName"].strip(),
