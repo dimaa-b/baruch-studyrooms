@@ -8,16 +8,31 @@ from datetime import datetime, time
 from typing import Dict, Any
 from auth import AuthManager, MonitoringManager, require_auth, optional_auth
 import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # --- Flask App Setup ---
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+CORS(app, 
+     origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+)
 
 # --- Authentication Setup ---
 MONGO_URI = os.environ.get("MONGODB_URI")
-auth_manager = AuthManager(MONGO_URI)
-monitoring_manager = MonitoringManager(MONGO_URI)
-app.secret_key = 'your-secret-key-change-in-production' 
+if MONGO_URI:
+    auth_manager = AuthManager(MONGO_URI)
+    monitoring_manager = MonitoringManager(MONGO_URI)
+else:
+    print("Warning: MONGODB_URI not set. Authentication features will be disabled.")
+    auth_manager = None
+    monitoring_manager = None
+
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production") 
 
 # --- Constants ---
 BASE_URL = "https://libraryrooms.baruch.cuny.edu"
@@ -25,9 +40,12 @@ LID = 16857
 GID = 35704
 USER_STATUS_ANSWER = "Current student at Baruch or CUNY SPS"
 
-# --- Authentication Endpoints (unchanged) ---
+# --- Authentication Endpoints ---
 @app.route('/api/auth/register', methods=['POST'])
 def register():
+    if not auth_manager:
+        return jsonify({"error": "Authentication service not available. Please configure MongoDB."}), 503
+    
     data = request.json
     required_fields = ['email', 'username', 'password', 'firstName', 'lastName']
     for field in required_fields:
@@ -49,6 +67,9 @@ def register():
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
+    if not auth_manager:
+        return jsonify({"error": "Authentication service not available. Please configure MongoDB."}), 503
+    
     data = request.json
     if not data.get('email') or not data.get('password'):
         return jsonify({"error": "Email/username and password are required"}), 400
@@ -79,8 +100,10 @@ def login():
         return jsonify(result), 401
 
 @app.route('/api/auth/logout', methods=['POST'])
-@optional_auth(auth_manager)
 def logout():
+    if not auth_manager:
+        return jsonify({"success": True, "message": "Logged out successfully"})
+    
     session_token = request.cookies.get('session_token')
     if session_token:
         auth_manager.logout_user(session_token)
@@ -90,31 +113,48 @@ def logout():
     return response
 
 @app.route('/api/auth/me', methods=['GET'])
-@require_auth(auth_manager)
 def get_current_user():
+    if not auth_manager:
+        return jsonify({"error": "Authentication service not available"}), 503
+    
+    session_token = request.cookies.get('session_token') or request.headers.get('Authorization')
+    if session_token and session_token.startswith('Bearer '):
+        session_token = session_token[7:]
+    
+    user = auth_manager.get_user_from_session(session_token)
+    if not user:
+        return jsonify({"error": "Authentication required", "authenticated": False}), 401
+    
     return jsonify({
         "authenticated": True,
         "user": {
-            "id": request.current_user['id'],
-            "email": request.current_user['email'],
-            "username": request.current_user['username'],
-            "firstName": request.current_user['first_name'],
-            "lastName": request.current_user['last_name']
+            "id": user['id'],
+            "email": user['email'],
+            "username": user['username'],
+            "firstName": user['first_name'],
+            "lastName": user['last_name']
         }
     })
 
 @app.route('/api/auth/check', methods=['GET'])
-@optional_auth(auth_manager)
 def check_auth():
-    if request.current_user:
+    if not auth_manager:
+        return jsonify({"authenticated": False})
+    
+    session_token = request.cookies.get('session_token') or request.headers.get('Authorization')
+    if session_token and session_token.startswith('Bearer '):
+        session_token = session_token[7:]
+    
+    user = auth_manager.get_user_from_session(session_token)
+    if user:
         return jsonify({
             "authenticated": True,
             "user": {
-                "id": request.current_user['id'],
-                "email": request.current_user['email'],
-                "username": request.current_user['username'],
-                "firstName": request.current_user['first_name'],
-                "lastName": request.current_user['last_name']
+                "id": user['id'],
+                "email": user['email'],
+                "username": user['username'],
+                "firstName": user['first_name'],
+                "lastName": user['last_name']
             }
         })
     else:
