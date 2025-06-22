@@ -1,9 +1,4 @@
-Baruch Study Room Booker API with Authentication
-
-Authentication System:
-The API now includes a comprehensive cookie-based authentication system using MongoDB. All authentication endpoints use secure HTTP-only cookies for session management.
-
-Authentication Endpoints:
+Baruch Study Room Booker API 
 
 1. Register New User
 
