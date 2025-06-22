@@ -1,4 +1,159 @@
-Baruch Study Room Booker API
+Baruch Study Room Booker API with Authentication
+
+Authentication System:
+The API now includes a comprehensive cookie-based authentication system using MongoDB. All authentication endpoints use secure HTTP-only cookies for session management.
+
+Authentication Endpoints:
+
+1. Register New User
+
+Creates a new user account with Baruch/CUNY email validation.
+
+Endpoint: /api/auth/register
+Method: POST
+Headers: Content-Type: application/json
+
+Request Body:
+{
+  "email": "user@baruchmail.cuny.edu",
+  "username": "johndoe",
+  "password": "SecurePass123",
+  "firstName": "John",
+  "lastName": "Doe"
+}
+
+Success Response (201):
+{
+  "success": true,
+  "message": "User registered successfully"
+}
+
+Error Response (400):
+{
+  "success": false,
+  "message": "Error message here"
+}
+
+Password Requirements:
+- At least 8 characters
+- At least one uppercase letter
+- At least one lowercase letter
+- At least one number
+
+Email Requirements:
+- Must be @baruchmail.cuny.edu or @spsmail.cuny.edu
+
+2. Login User
+
+Authenticates user and sets session cookie.
+
+Endpoint: /api/auth/login
+Method: POST
+Headers: Content-Type: application/json
+
+Request Body:
+{
+  "email": "user@baruchmail.cuny.edu",  // or username
+  "password": "SecurePass123"
+}
+
+Success Response (200):
+Sets HTTP-only session cookie and returns:
+{
+  "success": true,
+  "message": "Login successful",
+  "user": {
+    "id": "user_id_here",
+    "email": "user@baruchmail.cuny.edu",
+    "username": "johndoe",
+    "firstName": "John",
+    "lastName": "Doe"
+  },
+  "expires_at": "2025-06-29T12:00:00"
+}
+
+Error Response (401):
+{
+  "success": false,
+  "message": "Invalid credentials"
+}
+
+3. Logout User
+
+Logs out user and clears session cookie.
+
+Endpoint: /api/auth/logout
+Method: POST
+
+Response (200):
+{
+  "success": true,
+  "message": "Logged out successfully"
+}
+
+4. Get Current User
+
+Gets current authenticated user information (requires authentication).
+
+Endpoint: /api/auth/me
+Method: GET
+
+Success Response (200):
+{
+  "authenticated": true,
+  "user": {
+    "id": "user_id_here",
+    "email": "user@baruchmail.cuny.edu",
+    "username": "johndoe",
+    "firstName": "John",
+    "lastName": "Doe"
+  }
+}
+
+Error Response (401):
+{
+  "error": "Authentication required",
+  "authenticated": false
+}
+
+5. Check Authentication Status
+
+Checks if user is currently authenticated (does not require authentication).
+
+Endpoint: /api/auth/check
+Method: GET
+
+Response (200) - If authenticated:
+{
+  "authenticated": true,
+  "user": {
+    "id": "user_id_here",
+    "email": "user@baruchmail.cuny.edu",
+    "username": "johndoe",
+    "firstName": "John",
+    "lastName": "Doe"
+  }
+}
+
+Response (200) - If not authenticated:
+{
+  "authenticated": false
+}
+
+6. Refresh Session
+
+Extends session expiration (requires authentication).
+
+Endpoint: /api/auth/refresh
+Method: POST
+
+Success Response (200):
+{
+  "success": true,
+  "expires_at": "2025-06-29T12:00:00"
+}
+
+Room Booking Endpoints:
 
 1. Get Room Availability
 
@@ -56,6 +211,8 @@ Note: Slots with a "className" property (e.g., "s-lc-eq-pending") are considered
 
 Submits a booking request for a specific room and time slot. This endpoint performs the entire 4-step booking process with the official Baruch API.
 
+Note: If user is authenticated, their firstName, lastName, and email will be automatically filled if not provided in the request.
+
 Endpoint: /api/book
 
 Method: POST
@@ -71,9 +228,9 @@ Generated json
   "date": "2025-06-24",
   "roomId": "142254",
   "startTime": "09:00:00",
-  "firstName": "",
-  "lastName": "",
-  "email": ""
+  "firstName": "",     // Optional if authenticated
+  "lastName": "",      // Optional if authenticated
+  "email": ""          // Optional if authenticated
 }
 
 date: The desired date in YYYY-MM-DD format.
@@ -82,11 +239,11 @@ roomId: The itemId of the room, as a string.
 
 startTime: The start time of the slot in HH:MM:SS format.
 
-firstName: The user's first name.
+firstName: The user's first name (auto-filled if authenticated).
 
-lastName: The user's last name.
+lastName: The user's last name (auto-filled if authenticated).
 
-email: The user's email. Must be a valid @baruchmail.cuny.edu or @spsmail.cuny.edu address.
+email: The user's email. Must be a valid @baruchmail.cuny.edu or @spsmail.cuny.edu address (auto-filled if authenticated).
 
 Success Response (200 OK):
 Indicates that the booking request was successfully submitted and is now pending email confirmation.
@@ -96,3 +253,69 @@ Generated json
   "success": true,
   "message": "Booking is pending! Check your email."
 }
+
+3. Monitor and Auto-Book
+
+Monitors availability for a specific timeframe and automatically books when a slot becomes available (perfect for catching cancellations).
+
+Note: If user is authenticated, their firstName, lastName, and email will be automatically filled if not provided in the request.
+
+Endpoint: /api/monitor-and-book
+
+Method: POST
+
+Headers: Content-Type: application/json
+
+Request Body:
+{
+  "date": "2025-06-24",
+  "startTime": "13:00",     // 1:00 PM
+  "endTime": "14:00",       // 2:00 PM  
+  "firstName": "John",      // Optional if authenticated
+  "lastName": "Doe",        // Optional if authenticated
+  "email": "john@baruchmail.cuny.edu"  // Optional if authenticated
+}
+
+Success Response (200):
+{
+  "success": true,
+  "attempt_id": "unique_id_here",
+  "message": "Started monitoring availability for 2025-06-24 13:00-14:00. Will auto-book when a slot becomes available!"
+}
+
+4. Check Monitor Status
+
+Check the status of an active availability monitor.
+
+Endpoint: /api/monitor-and-book/{attempt_id}/status
+Method: GET
+
+5. Stop Monitor
+
+Stop monitoring for availability.
+
+Endpoint: /api/monitor-and-book/{attempt_id}/stop
+Method: POST
+
+6. List Active Monitors
+
+List all currently active availability monitors.
+
+Endpoint: /api/monitor-and-book/list
+Method: GET
+
+Authentication Notes:
+
+- Sessions are valid for 7 days and automatically refresh on activity
+- All authentication uses secure HTTP-only cookies
+- CORS is configured to support credentials
+- MongoDB is used for user and session storage
+- Passwords are hashed using bcrypt
+- Email validation ensures only Baruch/CUNY SPS emails are accepted
+
+For Frontend Integration:
+
+1. Set withCredentials: true in your HTTP client (axios/fetch)
+2. Cookies will be automatically sent with requests
+3. Check /api/auth/check on app load to determine authentication state
+4. User info will be auto-filled in booking forms when authenticated
