@@ -4,4 +4,24 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  theme: {
+    extend: {
+      colors: {
+        primary: {
+          DEFAULT: '#1B38E2',
+          50: '#E8ECFE',
+          100: '#D1DAFD',
+          200: '#A3B5FB',
+          300: '#7590F9',
+          400: '#476BF7',
+          500: '#1B38E2',
+          600: '#1530C9',
+          700: '#1028B0',
+          800: '#0A2097',
+          900: '#05187E'
+        },
+        secondary: '#ffffff',
+      },
+    },
+  },
 };

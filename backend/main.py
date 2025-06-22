@@ -2,6 +2,7 @@
 from flask import Flask, request, jsonify, render_template, make_response
 from flask_cors import CORS
 import requests
+from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 import json
 import re
 from datetime import datetime, time
@@ -9,6 +10,7 @@ from typing import Dict, Any
 from auth import AuthManager, MonitoringManager, require_auth, optional_auth
 import os
 from dotenv import load_dotenv
+from datetime import timedelta
 
 # Load environment variables
 load_dotenv()
@@ -39,6 +41,75 @@ BASE_URL = "https://libraryrooms.baruch.cuny.edu"
 LID = 16857
 GID = 35704
 USER_STATUS_ANSWER = "Current student at Baruch or CUNY SPS"
+
+# --- Helper Functions ---
+def determine_slot_availability(slot):
+    """
+    Determine if a slot is available for booking.
+    
+    A slot is considered unavailable if:
+    1. It has a className field (usually indicates booked/unavailable status)
+    2. The className contains certain keywords that indicate unavailability
+    
+    Args:
+        slot (dict): The slot object from the external API
+        
+    Returns:
+        bool: True if available, False if unavailable
+    """
+    # Check if slot has className field
+    if 'className' in slot:
+        class_name = slot['className'].lower()
+        return False
+    
+    # If no className or no unavailable keywords found, slot is available
+    # Also check that essential fields exist
+    return all(field in slot for field in ['checksum', 'itemId', 'start', 'end'])
+
+def get_room_availability(target_date_str):
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": BASE_URL,
+        "Referer": f"{BASE_URL}/spaces?lid={LID}&gid={GID}"
+    })
+
+    url = f"{BASE_URL}/spaces/availability/grid"
+    try:
+        start_date = datetime.strptime(target_date_str, "%Y-%m-%d")
+        end_date = start_date + timedelta(days=1)
+        end_date_str = end_date.strftime("%Y-%m-%d")
+    except Exception as e:
+        return jsonify({"error": f"Invalid date format: {e}"}), 400
+
+    payload = {
+        "lid": LID, "gid": GID, "eid": -1, "seat": 0, "seatId": 0, "zone": 0,
+        "start": target_date_str, "end": end_date_str,
+        "pageIndex": 0, "pageSize": 18
+    }
+
+    try:
+        response = session.post(url, data=payload)
+        response.raise_for_status()
+
+        slots_by_room = {}
+        for slot in response.json().get("slots", []):
+            room_id = slot['itemId']
+            if room_id not in slots_by_room:
+                slots_by_room[room_id] = []
+            
+            # Add display time
+            slot['displayTime'] = datetime.strptime(slot['start'], "%Y-%m-%d %H:%M:%S").strftime("%-I:%M %p")
+            
+            slot['available'] = determine_slot_availability(slot)
+            
+            slots_by_room[room_id].append(slot)
+
+        return slots_by_room
+
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}
 
 # --- Authentication Endpoints ---
 @app.route('/api/auth/register', methods=['POST'])
@@ -167,40 +238,8 @@ def get_availability():
     if not target_date_str:
         return jsonify({"error": "Date parameter is required"}), 400
 
-    print(f"Fetching availability for {target_date_str}...")
-
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": BASE_URL,
-        "Referer": f"{BASE_URL}/spaces?lid={LID}&gid={GID}"
-    })
-
-    url = f"{BASE_URL}/spaces/availability/grid"
-    payload = {
-        "lid": LID, "gid": GID, "eid": -1, "seat": 0, "seatId": 0, "zone": 0,
-        "start": target_date_str, "end": target_date_str,
-        "pageIndex": 0, "pageSize": 18
-    }
-
-    try:
-        response = session.post(url, data=payload)
-        response.raise_for_status()
-        
-        slots_by_room = {}
-        for slot in response.json().get("slots", []):
-            room_id = slot['itemId']
-            if room_id not in slots_by_room:
-                slots_by_room[room_id] = []
-            
-            slot['displayTime'] = datetime.strptime(slot['start'], "%Y-%m-%d %H:%M:%S").strftime("%-I:%M %p")
-            slots_by_room[room_id].append(slot)
-
-        return jsonify(slots_by_room)
-
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": str(e)}), 500
+    response = get_room_availability(target_date_str)
+    return jsonify(response)
 
 @app.route('/api/book', methods=['POST'])
 @optional_auth(auth_manager)
@@ -216,6 +255,56 @@ def book_room():
         if not data.get('email'):
             data['email'] = request.current_user['email']
 
+    # Validate required fields
+    required_fields = ['date', 'startTime', 'endTime', 'firstName', 'lastName', 'email']
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+
+    # Get room availability using the existing function
+    slots_by_room = get_room_availability(data['date'])
+    
+    # Check if there's an error in the availability response
+    if isinstance(slots_by_room, dict) and 'error' in slots_by_room:
+        return jsonify({"success": False, "message": f"Failed to check availability: {slots_by_room['error']}"}), 500
+    
+    # Find ANY available slot within the desired timeframe
+    target_slot = None
+    start_time = data['startTime']
+    end_time = data['endTime']
+    
+    # Extract just the time part if full datetime strings are provided
+    if len(start_time) > 5:  # If it's a full datetime string
+        start_time = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
+    if len(end_time) > 5:  # If it's a full datetime string  
+        end_time = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
+    
+    # Search through all rooms and all slots to find an available one in the timeframe
+    for room_id, slots in slots_by_room.items():
+        for slot in slots:
+            if not slot.get('available', False):
+                continue
+                
+            # Parse slot time to compare with desired timeframe
+            slot_start = datetime.strptime(slot['start'], "%Y-%m-%d %H:%M:%S")
+            slot_time = slot_start.strftime("%H:%M")
+
+
+            if start_time <= slot_time < end_time:
+                target_slot = slot
+                break
+        
+        # If we found a slot, break out of the outer loop too
+        if target_slot:
+            break
+    
+    if not target_slot:
+        return jsonify({
+            "success": False, 
+            "message": f"No available rooms found in timeframe {start_time}-{end_time}"
+        }), 409
+
+    # Set up session for booking API calls
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
@@ -223,19 +312,6 @@ def book_room():
         "Origin": BASE_URL,
         "Referer": f"{BASE_URL}/spaces?lid={LID}&gid={GID}"
     })
-    
-    # Get the specific slot checksum
-    availability_url = f"{BASE_URL}/spaces/availability/grid"
-    availability_payload = {"lid": LID, "gid": GID, "start": data['date'], "end": data['date']}
-    availability_res = session.post(availability_url, data=availability_payload)
-    target_slot = None
-    for slot in availability_res.json().get("slots", []):
-        if str(slot['itemId']) == str(data['roomId']) and slot['start'] == f"{data['date']} {data['startTime']}":
-            target_slot = slot
-            break
-    
-    if not target_slot:
-        return jsonify({"success": False, "message": "Slot is no longer available."}), 409
 
     # Add to cart
     add_url = f"{BASE_URL}/spaces/availability/booking/add"
@@ -246,7 +322,30 @@ def book_room():
         "lid": LID, "gid": GID, "start": data['date']
     }
     add_res = session.post(add_url, data=add_payload)
-    pending_booking = add_res.json().get("bookings", [])[0]
+    
+    # Check response status and content before parsing JSON
+    if add_res.status_code != 200:
+        return jsonify({
+            "success": False, 
+            "message": f"Failed to add booking to cart. Status: {add_res.status_code}, Response: {add_res.text[:500]}"
+        }), 500
+    
+    try:
+        add_response_data = add_res.json()
+        print("Add to cart response:", add_response_data)
+    except RequestsJSONDecodeError:
+        return jsonify({
+            "success": False, 
+            "message": f"Invalid response from booking system. Response: {add_res.text[:500]}"
+        }), 500
+    
+    if "bookings" not in add_response_data or not add_response_data["bookings"]:
+        return jsonify({
+            "success": False, 
+            "message": f"No bookings returned from add to cart. Response: {add_response_data}"
+        }), 500
+    
+    pending_booking = add_response_data["bookings"][0]
 
     # Get session ID
     times_url = f"{BASE_URL}/ajax/space/times"
@@ -255,8 +354,28 @@ def book_room():
     }
     times_payload["method"] = 11
     times_res = session.post(times_url, data=times_payload)
-    html_content = times_res.json().get("html", "")
+    
+    # Check response and parse JSON safely
+    if times_res.status_code != 200:
+        return jsonify({
+            "success": False, 
+            "message": f"Failed to get session ID. Status: {times_res.status_code}, Response: {times_res.text[:500]}"
+        }), 500
+    
+    try:
+        times_response_data = times_res.json()
+        html_content = times_response_data.get("html", "")
+    except RequestsJSONDecodeError:
+        return jsonify({
+            "success": False, 
+            "message": f"Invalid response when getting session ID. Response: {times_res.text[:500]}"
+        }), 500
     match = re.search(r'id="session" name="session" value="(\d+)"', html_content)
+    if not match:
+        return jsonify({
+            "success": False, 
+            "message": f"Could not find session ID in response. HTML content: {html_content[:500]}"
+        }), 500
     session_id = match.group(1)
 
     # Submit final booking
@@ -279,10 +398,37 @@ def book_room():
     
     final_res = session.post(book_url, data=final_payload, headers=final_headers)
     
-    if final_res.status_code == 200 and "bookId" in final_res.json():
-        return jsonify({"success": True, "message": "Booking is pending! Check your email."})
+    # Check final booking response
+    if final_res.status_code != 200:
+        return jsonify({
+            "success": False, 
+            "message": f"Final booking failed. Status: {final_res.status_code}, Response: {final_res.text[:500]}"
+        }), 500
+    
+    try:
+        final_response_data = final_res.json()
+    except RequestsJSONDecodeError:
+        return jsonify({
+            "success": False, 
+            "message": f"Invalid response from final booking. Response: {final_res.text[:500]}"
+        }), 500
+    
+    if "bookId" in final_response_data:
+        return jsonify({
+            "success": True, 
+            "message": f"Successfully booked Room {target_slot['itemId']} at {target_slot['displayTime']}! Check your email for confirmation.",
+            "booking": {
+                "room_id": target_slot['itemId'],
+                "start_time": target_slot['start'],
+                "display_time": target_slot['displayTime'],
+                "booking_id": final_response_data.get("bookId")
+            }
+        })
     else:
-        return jsonify({"success": False, "message": "Final booking step failed."}), 500
+        return jsonify({
+            "success": False, 
+            "message": f"Final booking step failed - no booking ID returned. Response: {final_response_data}"
+        }), 500
 
 @app.route('/api/check-and-book-once', methods=['POST'])
 @optional_auth(auth_manager)
@@ -309,6 +455,12 @@ def check_and_book_once():
     target_date = data['date']
     start_time = data['startTime']
     end_time = data['endTime']
+    
+    # Extract just the time part if full datetime strings are provided
+    if len(start_time) > 5:  # If it's a full datetime string
+        start_time = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
+    if len(end_time) > 5:  # If it's a full datetime string  
+        end_time = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
     
     try:
         session = requests.Session()
@@ -338,7 +490,9 @@ def check_and_book_once():
             slot_start = datetime.strptime(slot['start'], "%Y-%m-%d %H:%M:%S")
             slot_time = slot_start.strftime("%H:%M")
             
-            if start_time <= slot_time < end_time:
+            # Check if slot is in the target timeframe AND is actually available
+            if (start_time <= slot_time < end_time and 
+                determine_slot_availability(slot)):
                 target_slots.append(slot)
         
         if not target_slots:
@@ -531,7 +685,9 @@ def check_and_book_for_request(request_id):
             if request_doc.get('room_preference') and str(slot['itemId']) != str(request_doc['room_preference']):
                 continue
             
-            if booking_data['startTime'] <= slot_time < booking_data['endTime']:
+            # Check if slot is in the target timeframe AND is actually available
+            if (booking_data['startTime'] <= slot_time < booking_data['endTime'] and 
+                determine_slot_availability(slot)):
                 target_slots.append(slot)
         
         # Update check count
@@ -772,7 +928,9 @@ def check_all_monitoring_requests():
                 if request_doc.get('room_preference') and str(slot['itemId']) != str(request_doc['room_preference']):
                     continue
                 
-                if booking_data['startTime'] <= slot_time < booking_data['endTime']:
+                # Check if slot is in the target timeframe AND is actually available
+                if (booking_data['startTime'] <= slot_time < booking_data['endTime'] and 
+                    determine_slot_availability(slot)):
                     target_slots.append(slot)
             
             # Update check count
