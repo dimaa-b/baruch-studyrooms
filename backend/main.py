@@ -586,8 +586,6 @@ def book_room():
     first_slot = target_slots[0]
     last_slot = target_slots[-1] if len(target_slots) > 1 else target_slots[0]
     
-    print('Last Slot', last_slot)
-
     formatted_booking = {
         "id": 1,
         "eid": pending_booking.get('eid', first_slot['itemId']),
@@ -611,7 +609,6 @@ def book_room():
         "method": 11,
     }
     
-    print(f"Final payload with {len(formatted_bookings)} bookings:", final_payload)
     final_headers = session.headers.copy()
     if 'Content-Type' in final_headers:
         del final_headers['Content-Type']
@@ -662,262 +659,6 @@ def book_room():
             "message": f"Final booking step failed - no booking ID returned. Response: {final_response_data}"
         }), 500
 
-
-@app.route("/api/check-and-book-once", methods=["POST"])
-@optional_auth(auth_manager)
-def check_and_book_once():
-    """
-    Serverless-friendly version: Check availability once and book if available.
-    No continuous monitoring - frontend can call this repeatedly or use external scheduler.
-    """
-    data = request.json
-
-    if request.current_user:
-        if not data.get("firstName"):
-            data["firstName"] = request.current_user["first_name"]
-        if not data.get("lastName"):
-            data["lastName"] = request.current_user["last_name"]
-        if not data.get("email"):
-            data["email"] = request.current_user["email"]
-
-    required_fields = [
-        "date",
-        "startTime",
-        "duration",
-        "firstName",
-        "lastName",
-        "email",
-    ]
-    for field in required_fields:
-        if field not in data:
-            return jsonify({"error": f"Missing required field: {field}"}), 400
-
-    # Validate duration is a positive integer
-    try:
-        duration_hours = int(data["duration"])
-        if duration_hours <= 0:
-            return (
-                jsonify({"error": "Duration must be a positive integer (hours)"}),
-                400,
-            )
-    except (ValueError, TypeError):
-        return jsonify({"error": "Duration must be a positive integer (hours)"}), 400
-
-    target_date = data["date"]
-    start_time = data["startTime"]
-
-    # Extract just the time part if full datetime strings are provided
-    if len(start_time) > 5:  # If it's a full datetime string
-        start_time = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").strftime(
-            "%H:%M"
-        )
-
-    # Calculate end time
-    start_dt = datetime.strptime(f"{target_date} {start_time}", "%Y-%m-%d %H:%M")
-    end_dt = start_dt + timedelta(hours=duration_hours)
-    end_time = end_dt.strftime("%H:%M")
-
-    try:
-        session = requests.Session()
-        session.headers.update(
-            {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-                "X-Requested-With": "XMLHttpRequest",
-                "Origin": BASE_URL,
-                "Referer": f"{BASE_URL}/spaces?lid={LID}&gid={GID}",
-            }
-        )
-
-        # Check availability using the existing function
-        slots_by_room = get_room_availability(target_date)
-
-        # Check if there's an error in the availability response
-        if isinstance(slots_by_room, dict) and "error" in slots_by_room:
-            return jsonify(
-                {
-                    "success": False,
-                    "available": False,
-                    "message": f"Failed to check availability: {slots_by_room['error']}",
-                }
-            )
-
-        # Find consecutive slots for the requested duration
-        target_slots = find_consecutive_slots(
-            slots_by_room, start_time, duration_hours, target_date
-        )
-
-        if not target_slots:
-            return jsonify(
-                {
-                    "success": False,
-                    "available": False,
-                    "message": f"No {duration_hours}-hour consecutive slots available starting from {start_time}",
-                }
-            )
-
-        # Found consecutive slots! Try to book them
-
-        # Attempt booking (same logic as regular booking)
-        try:
-            # Add first slot to cart
-            target_slot = target_slots[0]
-            add_url = f"{BASE_URL}/spaces/availability/booking/add"
-            add_payload = {
-                "add[eid]": target_slot["itemId"],
-                "add[gid]": GID,
-                "add[lid]": LID,
-                "add[start]": target_slot["start"].split(" ")[0]
-                + " "
-                + target_slot["start"].split(" ")[1][:5],
-                "add[end]": target_slot["end"].split(" ")[0]
-                + " "
-                + target_slot["end"].split(" ")[1][:5],
-                "add[checksum]": target_slot["checksum"],
-                "lid": LID,
-                "gid": GID,
-                "start": target_date,
-            }
-            add_res = session.post(add_url, data=add_payload)
-            
-            if add_res.status_code != 200:
-                return jsonify({"success": False, "message": f"Failed to add first hour. Status: {add_res.status_code}"}), 500
-                
-            add_response_data = add_res.json()
-            if "bookings" not in add_response_data or not add_response_data["bookings"]:
-                return jsonify({"success": False, "message": "No bookings returned for first slot."}), 500
-            
-            # Initialize all_bookings with the first booking
-            all_bookings = [add_response_data["bookings"][0]]
-
-            # If we need a 2-hour booking, update the booking to extend to the second slot
-            if duration_hours > 1:
-                second_slot = target_slots[1]
-                first_booking = all_bookings[0]
-                
-                # Use update URL instead of add URL for the second slot
-                update_url = f"{BASE_URL}/spaces/availability/booking/update"
-                update_payload = {
-                    "update[id]": first_booking["id"],
-                    "update[checksum]": second_slot["checksum"],
-                    "update[end]": second_slot["end"].split(" ")[0] + " " + second_slot["end"].split(" ")[1][:8],  # Include seconds
-                    "lid": LID,
-                    "gid": GID,
-                    "start": target_date,
-                    "end": target_date,
-                    # Include the existing booking information
-                    f"bookings[0][id]": first_booking["id"],
-                    f"bookings[0][eid]": first_booking["eid"],
-                    f"bookings[0][seat_id]": 0,
-                    f"bookings[0][gid]": GID,
-                    f"bookings[0][lid]": LID,
-                    f"bookings[0][start]": target_slot["start"].split(" ")[0] + " " + target_slot["start"].split(" ")[1][:5],
-                    f"bookings[0][end]": target_slot["end"].split(" ")[0] + " " + target_slot["end"].split(" ")[1][:5],
-                    f"bookings[0][checksum]": first_booking["checksum"]
-                }
-
-                update_res = session.post(update_url, data=update_payload)
-                
-                if update_res.status_code != 200:
-                    return jsonify({"success": False, "message": f"Failed to extend booking. Status: {update_res.status_code}"}), 500
-
-                update_response_data = update_res.json()
-                if "bookings" not in update_response_data or not update_response_data["bookings"]:
-                    return jsonify({"success": False, "message": "No bookings returned for extended slot."}), 500
-
-                # Update the booking with the extended time
-                all_bookings = [update_response_data["bookings"][0]]
-
-            # Get session ID (using first booking)
-            times_url = f"{BASE_URL}/ajax/space/times"
-            times_payload = {
-                f"bookings[0][{key}]": val for key, val in all_bookings[0].items()
-            }
-            times_payload["method"] = 11
-            times_res = session.post(times_url, data=times_payload)
-            html_content = times_res.json().get("html", "")
-            match = re.search(
-                r'id="session" name="session" value="(\d+)"', html_content
-            )
-            session_id = match.group(1)
-
-            # Submit final booking
-            book_url = f"{BASE_URL}/ajax/space/book"
-
-            # Format booking object to match the expected structure
-            formatted_bookings = []
-            
-            # For 2-hour bookings, we have one extended booking
-            # For 1-hour bookings, we have one regular booking
-            pending_booking = all_bookings[0]
-            first_slot = target_slots[0]
-            last_slot = target_slots[-1] if len(target_slots) > 1 else target_slots[0]
-            
-            formatted_booking = {
-                "id": 1,
-                "eid": pending_booking.get('eid', first_slot['itemId']),
-                "seat_id": 0,
-                "gid": GID,
-                "lid": LID,
-                "start": first_slot['start'].split(' ')[0] + ' ' + first_slot['start'].split(' ')[1][:5],
-                "end": last_slot['end'].split(' ')[0] + ' ' + last_slot['end'].split(' ')[1][:5],
-                "checksum": pending_booking['checksum']
-            }
-            formatted_bookings.append(formatted_booking)
-
-            final_payload = {
-                "session": session_id,
-                "fname": data["firstName"],
-                "lname": data["lastName"],
-                "email": data["email"],
-                "q25689": USER_STATUS_ANSWER,
-                "bookings": json.dumps(formatted_bookings),
-                "returnUrl": f"/spaces?lid={LID}&gid={GID}",
-                "pickupHolds": "",
-                "method": 11,
-            }
-            final_headers = session.headers.copy()
-            if "Content-Type" in final_headers:
-                del final_headers["Content-Type"]
-
-            final_res = session.post(
-                book_url, data=final_payload, headers=final_headers
-            )
-
-            if final_res.status_code == 200 and "bookId" in final_res.json():
-                first_slot = target_slots[0]
-                last_slot = target_slots[-1]
-                room_id = first_slot["itemId"]
-                start_display = datetime.strptime(
-                    first_slot["start"], "%Y-%m-%d %H:%M:%S"
-                ).strftime("%-I:%M %p")
-                end_display = datetime.strptime(
-                    last_slot["end"], "%Y-%m-%d %H:%M:%S"
-                ).strftime("%-I:%M %p")
-
-                return jsonify(
-                    {
-                        "success": True,
-                        "message": f"Successfully booked {len(target_slots)} consecutive slots in Room {room_id} from {start_display} to {end_display}! Check your email.",
-                    }
-                )
-            else:
-                return (
-                    jsonify(
-                        {"success": False, "message": "Final booking step failed."}
-                    ),
-                    500,
-                )
-
-        except Exception as e:
-            return jsonify({"success": False, "message": str(e)}), 500
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# --- Monitoring Endpoints (Serverless-friendly with MongoDB storage) ---
-
-
 @app.route("/api/monitoring/create", methods=["POST"])
 @optional_auth(auth_manager)
 def create_monitoring_request():
@@ -951,12 +692,17 @@ def create_monitoring_request():
         if field not in data or not data[field]:
             return jsonify({"error": f"Missing required field: {field}"}), 400
 
-    # Validate duration is a positive integer
+    # Validate duration is a positive integer and limit to 1-2 hours
     try:
         duration_hours = int(data["duration"])
         if duration_hours <= 0:
             return (
                 jsonify({"error": "Duration must be a positive integer (hours)"}),
+                400,
+            )
+        if duration_hours > 2:
+            return (
+                jsonify({"error": "Duration must be 1 or 2 hours only"}),
                 400,
             )
     except (ValueError, TypeError):
@@ -982,6 +728,7 @@ def create_monitoring_request():
         target_date=data["date"],
         start_time=start_time,
         end_time=end_time,
+        duration_hours=duration_hours,
         room_preference=data.get("roomPreference"),
     )
 
@@ -1036,14 +783,14 @@ def check_and_book_for_request(request_id):
     booking_data = {
         "date": request_doc["target_date"],
         "startTime": request_doc["start_time"],
-        "endTime": request_doc["end_time"],
+        "duration": request_doc["duration_hours"],
         "firstName": request_doc["first_name"],
         "lastName": request_doc["last_name"],
         "email": request_doc["email"],
     }
 
     try:
-        # Use the same logic as check_and_book_once
+        # Use the same logic as book_room function
         session = requests.Session()
         session.headers.update(
             {
@@ -1071,7 +818,7 @@ def check_and_book_for_request(request_id):
         target_slots = find_consecutive_slots(
             slots_by_room,
             booking_data["startTime"],
-            booking_data["endTime"],
+            booking_data["duration"],
             booking_data["date"],
         )
 
@@ -1087,157 +834,44 @@ def check_and_book_for_request(request_id):
         monitoring_manager.update_monitoring_status(request_id, "active")
 
         if not target_slots:
-            # Calculate duration for error message
-            start_dt = datetime.strptime(
-                f"{booking_data['date']} {booking_data['startTime']}", "%Y-%m-%d %H:%M"
-            )
-            end_dt = datetime.strptime(
-                f"{booking_data['date']} {booking_data['endTime']}", "%Y-%m-%d %H:%M"
-            )
-            duration_hours = int((end_dt - start_dt).total_seconds() / 3600)
-
             return jsonify(
                 {
                     "success": False,
                     "available": False,
-                    "message": f"No {duration_hours}-hour consecutive slots available in timeframe {booking_data['startTime']}-{booking_data['endTime']}",
+                    "message": f"No {booking_data['duration']}-hour consecutive slots available starting from {booking_data['startTime']}",
                     "check_count": request_doc.get("check_count", 0) + 1,
                 }
             )
 
-        # Found consecutive slots! Try to book them
+        # Found consecutive slots! Try to book them using the same logic as book_room
 
-        try:
-            # Booking logic for multiple consecutive slots
-            all_bookings = []
+        target_slot = target_slots[0]
+        duration_hours = booking_data["duration"]
+        
+        # send the first booking request (for the first hour)
+        add_url = f"{BASE_URL}/spaces/availability/booking/add"
+        add_payload = {
+            "add[eid]": target_slot["itemId"],
+            "add[gid]": GID,
+            "add[lid]": LID,
+            "add[start]": target_slot["start"].split(" ")[0]
+            + " "
+            + target_slot["start"].split(" ")[1][:5],
+            "add[end]": target_slot["end"].split(" ")[0]
+            + " "
+            + target_slot["end"].split(" ")[1][:5],
+            "add[checksum]": target_slot["checksum"],
+            "lid": LID,
+            "gid": GID,
+            "start": booking_data["date"],
+            "end": booking_data["date"],
+        }
 
-            for target_slot in target_slots:
-                add_url = f"{BASE_URL}/spaces/availability/booking/add"
-                add_payload = {
-                    "add[eid]": target_slot["itemId"],
-                    "add[gid]": GID,
-                    "add[lid]": LID,
-                    "add[start]": target_slot["start"].split(" ")[0]
-                    + " "
-                    + target_slot["start"].split(" ")[1][:5],
-                    "add[end]": target_slot["end"].split(" ")[0]
-                    + " "
-                    + target_slot["end"].split(" ")[1][:5],
-                    "add[checksum]": target_slot["checksum"],
-                    "lid": LID,
-                    "gid": GID,
-                    "start": booking_data["date"],
-                }
-                add_res = session.post(add_url, data=add_payload)
-                pending_booking = add_res.json().get("bookings", [])[0]
-                all_bookings.append(pending_booking)
-
-            # Get session ID (using first booking)
-            times_url = f"{BASE_URL}/ajax/space/times"
-            times_payload = {
-                f"bookings[0][{key}]": val for key, val in all_bookings[0].items()
-            }
-            times_payload["method"] = 11
-            times_res = session.post(times_url, data=times_payload)
-            html_content = times_res.json().get("html", "")
-            match = re.search(
-                r'id="session" name="session" value="(\d+)"', html_content
-            )
-            session_id = match.group(1)
-
-            # Submit final booking
-            book_url = f"{BASE_URL}/ajax/space/book"
-
-            # Format all booking objects to match the expected structure
-            formatted_bookings = []
-            for i, (pending_booking, target_slot) in enumerate(
-                zip(all_bookings, target_slots)
-            ):
-                formatted_booking = {
-                    "id": i + 1,  # Sequential IDs for multiple bookings
-                    "eid": pending_booking.get("eid", target_slot["itemId"]),
-                    "seat_id": 0,  # Based on the successful request
-                    "gid": GID,
-                    "lid": LID,
-                    "start": target_slot["start"].split(" ")[0]
-                    + " "
-                    + target_slot["start"].split(" ")[1][:5],
-                    "end": target_slot["end"].split(" ")[0]
-                    + " "
-                    + target_slot["end"].split(" ")[1][:5],
-                    "checksum": pending_booking["checksum"],
-                }
-                formatted_bookings.append(formatted_booking)
-
-            final_payload = {
-                "session": session_id,
-                "fname": booking_data["firstName"],
-                "lname": booking_data["lastName"],
-                "email": booking_data["email"],
-                "q25689": USER_STATUS_ANSWER,
-                "bookings": json.dumps(formatted_bookings),
-                "returnUrl": f"/spaces?lid={LID}&gid={GID}",
-                "pickupHolds": "",
-                "method": 11,
-            }
-            final_headers = session.headers.copy()
-            if "Content-Type" in final_headers:
-                del final_headers["Content-Type"]
-
-            final_res = session.post(
-                book_url, data=final_payload, headers=final_headers
-            )
-
-            if final_res.status_code == 200 and "bookId" in final_res.json():
-                # Success! Update monitoring request to completed
-                first_slot = target_slots[0]
-                last_slot = target_slots[-1]
-                room_id = first_slot["itemId"]
-                start_display = datetime.strptime(
-                    first_slot["start"], "%Y-%m-%d %H:%M:%S"
-                ).strftime("%-I:%M %p")
-                end_display = datetime.strptime(
-                    last_slot["end"], "%Y-%m-%d %H:%M:%S"
-                ).strftime("%-I:%M %p")
-
-                success_details = {
-                    "slots": target_slots,
-                    "booking_id": final_res.json().get("bookId"),
-                    "booked_at": datetime.utcnow().isoformat(),
-                    "slot_count": len(target_slots),
-                }
-                monitoring_manager.update_monitoring_status(
-                    request_id, "completed", success_details=success_details
-                )
-
-                return jsonify(
-                    {
-                        "success": True,
-                        "available": True,
-                        "booked": True,
-                        "message": f"Successfully booked {len(target_slots)} consecutive slots in Room {room_id} from {start_display} to {end_display}!",
-                        "slots": target_slots,
-                        "booking_id": final_res.json().get("bookId"),
-                    }
-                )
-            else:
-                first_slot = target_slots[0]
-                error_msg = f"Found available slots but booking failed for Room {first_slot['itemId']}"
-                monitoring_manager.update_monitoring_status(
-                    request_id, "error", error_message=error_msg
-                )
-                return jsonify(
-                    {
-                        "success": False,
-                        "available": True,
-                        "booked": False,
-                        "message": error_msg,
-                        "slots": target_slots,
-                    }
-                )
-
-        except Exception as booking_error:
-            error_msg = f"Booking error: {str(booking_error)}"
+        add_res = session.post(add_url, data=add_payload)
+        
+        # Check first booking response
+        if add_res.status_code != 200:
+            error_msg = f"Failed to add first hour to cart. Status: {add_res.status_code}"
             monitoring_manager.update_monitoring_status(
                 request_id, "error", error_message=error_msg
             )
@@ -1247,9 +881,230 @@ def check_and_book_for_request(request_id):
                     "available": True,
                     "booked": False,
                     "message": error_msg,
-                    "slots": target_slots if "target_slots" in locals() else [],
                 }
             )
+
+        try:
+            add_response_data = add_res.json()
+            print(f"Add first slot to cart response: {add_response_data}")
+        except RequestsJSONDecodeError:
+            error_msg = "Invalid response from booking system for first slot."
+            monitoring_manager.update_monitoring_status(
+                request_id, "error", error_message=error_msg
+            )
+            return jsonify(
+                {
+                    "success": False,
+                    "available": True,
+                    "booked": False,
+                    "message": error_msg,
+                }
+            )
+
+        if "bookings" not in add_response_data or not add_response_data["bookings"]:
+            error_msg = "No bookings returned for first slot."
+            monitoring_manager.update_monitoring_status(
+                request_id, "error", error_message=error_msg
+            )
+            return jsonify(
+                {
+                    "success": False,
+                    "available": True,
+                    "booked": False,
+                    "message": error_msg,
+                }
+            )
+
+        # Initialize all_bookings with the first booking
+        all_bookings = [add_response_data["bookings"][0]]
+
+        # If we need a 2-hour booking, update the booking to extend to the second slot
+        if duration_hours > 1:
+            second_slot = target_slots[1]
+            first_booking = all_bookings[0]
+            
+            # Use update URL instead of add URL for the second slot
+            update_url = f"{BASE_URL}/spaces/availability/booking/add"
+            update_payload = {
+                "update[id]": first_booking["id"],
+                "update[checksum]": first_booking['optionChecksums'][1],
+                "update[end]": second_slot["end"].split(" ")[0] + " " + second_slot["end"].split(" ")[1][:8],  # Include seconds
+                "lid": LID,
+                "gid": GID,
+                "start": booking_data["date"],
+                "end": booking_data["date"],
+                # Include the existing booking information
+                f"bookings[0][id]": first_booking["id"],
+                f"bookings[0][eid]": first_booking["eid"],
+                f"bookings[0][seat_id]": 0,
+                f"bookings[0][gid]": GID,
+                f"bookings[0][lid]": LID,
+                f"bookings[0][start]": target_slot["start"].split(" ")[0] + " " + target_slot["start"].split(" ")[1][:5],
+                f"bookings[0][end]": target_slot["end"].split(" ")[0] + " " + target_slot["end"].split(" ")[1][:5],
+                f"bookings[0][checksum]": first_booking["checksum"]
+            }
+
+            second_add_res = session.post(update_url, data=update_payload)
+            
+            if second_add_res.status_code != 200:
+                error_msg = f"Failed to extend booking to second hour. Status: {second_add_res.status_code}"
+                monitoring_manager.update_monitoring_status(
+                    request_id, "error", error_message=error_msg
+                )
+                return jsonify(
+                    {
+                        "success": False,
+                        "available": True,
+                        "booked": False,
+                        "message": error_msg,
+                    }
+                )
+
+            try:
+                second_add_response_data = second_add_res.json()
+                print(f"Update booking to second slot response: {second_add_response_data}")
+            except RequestsJSONDecodeError:
+                error_msg = "Invalid response from booking system for second slot."
+                monitoring_manager.update_monitoring_status(
+                    request_id, "error", error_message=error_msg
+                )
+                return jsonify(
+                    {
+                        "success": False,
+                        "available": True,
+                        "booked": False,
+                        "message": error_msg,
+                    }
+                )
+
+            if "bookings" not in second_add_response_data or not second_add_response_data["bookings"]:
+                error_msg = "No bookings returned for second slot."
+                monitoring_manager.update_monitoring_status(
+                    request_id, "error", error_message=error_msg
+                )
+                return jsonify(
+                    {
+                        "success": False,
+                        "available": True,
+                        "booked": False,
+                        "message": error_msg,
+                    }
+                )
+
+            # Update the booking with the extended time
+            all_bookings = [second_add_response_data["bookings"][0]]
+
+        # Submit final booking with all slots
+        book_url = f"{BASE_URL}/ajax/space/book"
+
+        # Format booking object to match the expected structure
+        formatted_bookings = []
+        
+        # For 2-hour bookings, we have one extended booking
+        # For 1-hour bookings, we have one regular booking
+        pending_booking = all_bookings[0]
+        first_slot = target_slots[0]
+        last_slot = target_slots[-1] if len(target_slots) > 1 else target_slots[0]
+        
+        formatted_booking = {
+            "id": 1,
+            "eid": pending_booking.get('eid', first_slot['itemId']),
+            "seat_id": 0,
+            "gid": GID,
+            "lid": LID,
+            "start": first_slot['start'].split(' ')[0] + ' ' + first_slot['start'].split(' ')[1][:5],
+            "end": last_slot['end'].split(' ')[0] + ' ' + last_slot['end'].split(' ')[1][:5],
+            "checksum": pending_booking['checksum']
+        }
+        formatted_bookings.append(formatted_booking)
+
+        final_payload = {
+            "fname": booking_data['firstName'],
+            "lname": booking_data['lastName'],
+            "email": booking_data['email'],
+            "q25689": USER_STATUS_ANSWER,
+            "bookings": json.dumps(formatted_bookings),
+            "returnUrl": f"/spaces?lid={LID}&gid={GID}",
+            "pickupHolds": "",
+            "method": 11,
+        }
+        
+        final_headers = session.headers.copy()
+        if 'Content-Type' in final_headers:
+            del final_headers['Content-Type']
+
+        final_res = session.post(book_url, data=final_payload, headers=final_headers)
+
+        # Check final booking response
+        if final_res.status_code != 200:
+            error_msg = f"Final booking failed. Status: {final_res.status_code}, Response: {final_res.text[:500]}"
+            monitoring_manager.update_monitoring_status(
+                request_id, "error", error_message=error_msg
+            )
+            return jsonify({
+                "success": False,
+                "available": True,
+                "booked": False,
+                "message": error_msg
+            })
+
+        try:
+            final_response_data = final_res.json()
+        except RequestsJSONDecodeError:
+            error_msg = f"Invalid response from final booking. Response: {final_res.text[:500]}"
+            monitoring_manager.update_monitoring_status(
+                request_id, "error", error_message=error_msg
+            )
+            return jsonify({
+                "success": False,
+                "available": True,
+                "booked": False,
+                "message": error_msg
+            })
+
+        if "bookId" in final_response_data:
+            # Success! Update monitoring request to completed
+            first_slot = target_slots[0]
+            last_slot = target_slots[-1]
+            room_id = first_slot["itemId"]
+            start_display = datetime.strptime(
+                first_slot["start"], "%Y-%m-%d %H:%M:%S"
+            ).strftime("%-I:%M %p")
+            end_display = datetime.strptime(
+                last_slot["end"], "%Y-%m-%d %H:%M:%S"
+            ).strftime("%-I:%M %p")
+
+            success_details = {
+                "slots": target_slots,
+                "booking_id": final_response_data.get("bookId"),
+                "booked_at": datetime.utcnow().isoformat(),
+                "slot_count": len(target_slots),
+            }
+            monitoring_manager.update_monitoring_status(
+                request_id, "completed", success_details=success_details
+            )
+
+            return jsonify(
+                {
+                    "success": True,
+                    "available": True,
+                    "booked": True,
+                    "message": f"Successfully booked {len(target_slots)} consecutive slots in Room {room_id} from {start_display} to {end_display}!",
+                    "slots": target_slots,
+                    "booking_id": final_response_data.get("bookId"),
+                }
+            )
+        else:
+            error_msg = f"Final booking step failed - no booking ID returned. Response: {final_response_data}"
+            monitoring_manager.update_monitoring_status(
+                request_id, "error", error_message=error_msg
+            )
+            return jsonify({
+                "success": False,
+                "available": True,
+                "booked": False,
+                "message": error_msg
+            })
 
     except Exception as e:
         error_msg = f"Error checking availability: {str(e)}"
@@ -1345,13 +1200,13 @@ def check_all_monitoring_requests():
             booking_data = {
                 "date": request_doc["target_date"],
                 "startTime": request_doc["start_time"],
-                "endTime": request_doc["end_time"],
+                "duration": request_doc["duration_hours"],
                 "firstName": request_doc["first_name"],
                 "lastName": request_doc["last_name"],
                 "email": request_doc["email"],
             }
 
-            # Use the same availability checking logic
+            # Use the same logic as book_room function
             session = requests.Session()
             session.headers.update(
                 {
@@ -1381,7 +1236,7 @@ def check_all_monitoring_requests():
             target_slots = find_consecutive_slots(
                 slots_by_room,
                 booking_data["startTime"],
-                booking_data["endTime"],
+                booking_data["duration"],
                 booking_data["date"],
             )
 
@@ -1397,161 +1252,45 @@ def check_all_monitoring_requests():
             monitoring_manager.update_monitoring_status(request_id, "active")
 
             if not target_slots:
-                # Calculate duration for error message
-                start_dt = datetime.strptime(
-                    f"{booking_data['date']} {booking_data['startTime']}",
-                    "%Y-%m-%d %H:%M",
-                )
-                end_dt = datetime.strptime(
-                    f"{booking_data['date']} {booking_data['endTime']}",
-                    "%Y-%m-%d %H:%M",
-                )
-                duration_hours = int((end_dt - start_dt).total_seconds() / 3600)
-
                 result = {
                     "request_id": request_id,
                     "success": False,
                     "available": False,
                     "booked": False,
-                    "message": f"No {duration_hours}-hour consecutive slots available in timeframe {booking_data['startTime']}-{booking_data['endTime']}",
+                    "message": f"No {booking_data['duration']}-hour consecutive slots available starting from {booking_data['startTime']}",
                 }
                 results.append(result)
                 continue
 
-            # Found consecutive slots! Try to book them
+            # Found consecutive slots! Try to book them using the same logic as book_room
 
-            try:
-                # Booking logic for multiple consecutive slots
-                all_bookings = []
+            target_slot = target_slots[0]
+            duration_hours = booking_data["duration"]
+            
+            # send the first booking request (for the first hour)
+            add_url = f"{BASE_URL}/spaces/availability/booking/add"
+            add_payload = {
+                "add[eid]": target_slot["itemId"],
+                "add[gid]": GID,
+                "add[lid]": LID,
+                "add[start]": target_slot["start"].split(" ")[0]
+                + " "
+                + target_slot["start"].split(" ")[1][:5],
+                "add[end]": target_slot["end"].split(" ")[0]
+                + " "
+                + target_slot["end"].split(" ")[1][:5],
+                "add[checksum]": target_slot["checksum"],
+                "lid": LID,
+                "gid": GID,
+                "start": booking_data["date"],
+                "end": booking_data["date"],
+            }
 
-                for target_slot in target_slots:
-                    add_url = f"{BASE_URL}/spaces/availability/booking/add"
-                    add_payload = {
-                        "add[eid]": target_slot["itemId"],
-                        "add[gid]": GID,
-                        "add[lid]": LID,
-                        "add[start]": target_slot["start"].split(" ")[0]
-                        + " "
-                        + target_slot["start"].split(" ")[1][:5],
-                        "add[end]": target_slot["end"].split(" ")[0]
-                        + " "
-                        + target_slot["end"].split(" ")[1][:5],
-                        "add[checksum]": target_slot["checksum"],
-                        "lid": LID,
-                        "gid": GID,
-                        "start": booking_data["date"],
-                    }
-                    add_res = session.post(add_url, data=add_payload)
-                    pending_booking = add_res.json().get("bookings", [])[0]
-                    all_bookings.append(pending_booking)
-
-                # Get session ID (using first booking)
-                times_url = f"{BASE_URL}/ajax/space/times"
-                times_payload = {
-                    f"bookings[0][{key}]": val for key, val in all_bookings[0].items()
-                }
-                times_payload["method"] = 11
-                times_res = session.post(times_url, data=times_payload)
-                html_content = times_res.json().get("html", "")
-                match = re.search(
-                    r'id="session" name="session" value="(\d+)"', html_content
-                )
-                session_id = match.group(1)
-
-                # Submit final booking
-                book_url = f"{BASE_URL}/ajax/space/book"
-
-                # Format all booking objects to match the expected structure
-                formatted_bookings = []
-                for i, (pending_booking, target_slot) in enumerate(
-                    zip(all_bookings, target_slots)
-                ):
-                    formatted_booking = {
-                        "id": i + 1,  # Sequential IDs for multiple bookings
-                        "eid": pending_booking.get("eid", target_slot["itemId"]),
-                        "seat_id": 0,  # Based on the successful request
-                        "gid": GID,
-                        "lid": LID,
-                        "start": target_slot["start"].split(" ")[0]
-                        + " "
-                        + target_slot["start"].split(" ")[1][:5],
-                        "end": target_slot["end"].split(" ")[0]
-                        + " "
-                        + target_slot["end"].split(" ")[1][:5],
-                        "checksum": pending_booking["checksum"],
-                    }
-                    formatted_bookings.append(formatted_booking)
-
-                final_payload = {
-                    "session": session_id,
-                    "fname": booking_data["firstName"],
-                    "lname": booking_data["lastName"],
-                    "email": booking_data["email"],
-                    "q25689": USER_STATUS_ANSWER,
-                    "bookings": json.dumps(formatted_bookings),
-                    "returnUrl": f"/spaces?lid={LID}&gid={GID}",
-                    "pickupHolds": "",
-                    "method": 11,
-                }
-                final_headers = session.headers.copy()
-                if "Content-Type" in final_headers:
-                    del final_headers["Content-Type"]
-
-                final_res = session.post(
-                    book_url, data=final_payload, headers=final_headers
-                )
-
-                if final_res.status_code == 200 and "bookId" in final_res.json():
-                    # Success! Update monitoring request to completed
-                    first_slot = target_slots[0]
-                    last_slot = target_slots[-1]
-                    room_id = first_slot["itemId"]
-                    start_display = datetime.strptime(
-                        first_slot["start"], "%Y-%m-%d %H:%M:%S"
-                    ).strftime("%-I:%M %p")
-                    end_display = datetime.strptime(
-                        last_slot["end"], "%Y-%m-%d %H:%M:%S"
-                    ).strftime("%-I:%M %p")
-
-                    success_details = {
-                        "slots": target_slots,
-                        "booking_id": final_res.json().get("bookId"),
-                        "booked_at": datetime.utcnow().isoformat(),
-                        "slot_count": len(target_slots),
-                    }
-                    monitoring_manager.update_monitoring_status(
-                        request_id, "completed", success_details=success_details
-                    )
-
-                    booked_count += 1
-                    result = {
-                        "request_id": request_id,
-                        "success": True,
-                        "available": True,
-                        "booked": True,
-                        "message": f"Successfully booked {len(target_slots)} consecutive slots in Room {room_id} from {start_display} to {end_display}!",
-                        "slots": target_slots,
-                        "booking_id": final_res.json().get("bookId"),
-                    }
-                    results.append(result)
-                else:
-                    first_slot = target_slots[0]
-                    error_msg = f"Found available slots but booking failed for Room {first_slot['itemId']}"
-                    monitoring_manager.update_monitoring_status(
-                        request_id, "error", error_message=error_msg
-                    )
-                    result = {
-                        "request_id": request_id,
-                        "success": False,
-                        "available": True,
-                        "booked": False,
-                        "message": error_msg,
-                        "slots": target_slots,
-                    }
-                    results.append(result)
-
-            except Exception as booking_error:
-                error_msg = f"Booking error: {str(booking_error)}"
+            add_res = session.post(add_url, data=add_payload)
+            
+            # Check first booking response
+            if add_res.status_code != 200:
+                error_msg = f"Failed to add first hour to cart. Status: {add_res.status_code}"
                 monitoring_manager.update_monitoring_status(
                     request_id, "error", error_message=error_msg
                 )
@@ -1561,7 +1300,243 @@ def check_all_monitoring_requests():
                     "available": True,
                     "booked": False,
                     "message": error_msg,
-                    "slots": target_slots if "target_slots" in locals() else [],
+                }
+                results.append(result)
+                continue
+
+            try:
+                add_response_data = add_res.json()
+                print(f"Add first slot to cart response: {add_response_data}")
+            except RequestsJSONDecodeError:
+                error_msg = "Invalid response from booking system for first slot."
+                monitoring_manager.update_monitoring_status(
+                    request_id, "error", error_message=error_msg
+                )
+                result = {
+                    "request_id": request_id,
+                    "success": False,
+                    "available": True,
+                    "booked": False,
+                    "message": error_msg,
+                }
+                results.append(result)
+                continue
+
+            if "bookings" not in add_response_data or not add_response_data["bookings"]:
+                error_msg = "No bookings returned for first slot."
+                monitoring_manager.update_monitoring_status(
+                    request_id, "error", error_message=error_msg
+                )
+                result = {
+                    "request_id": request_id,
+                    "success": False,
+                    "available": True,
+                    "booked": False,
+                    "message": error_msg,
+                }
+                results.append(result)
+                continue
+
+            # Initialize all_bookings with the first booking
+            all_bookings = [add_response_data["bookings"][0]]
+
+            # If we need a 2-hour booking, update the booking to extend to the second slot
+            if duration_hours > 1:
+                second_slot = target_slots[1]
+                first_booking = all_bookings[0]
+                
+                # Use update URL instead of add URL for the second slot
+                update_url = f"{BASE_URL}/spaces/availability/booking/add"
+                update_payload = {
+                    "update[id]": first_booking["id"],
+                    "update[checksum]": first_booking['optionChecksums'][1],
+                    "update[end]": second_slot["end"].split(" ")[0] + " " + second_slot["end"].split(" ")[1][:8],  # Include seconds
+                    "lid": LID,
+                    "gid": GID,
+                    "start": booking_data["date"],
+                    "end": booking_data["date"],
+                    # Include the existing booking information
+                    f"bookings[0][id]": first_booking["id"],
+                    f"bookings[0][eid]": first_booking["eid"],
+                    f"bookings[0][seat_id]": 0,
+                    f"bookings[0][gid]": GID,
+                    f"bookings[0][lid]": LID,
+                    f"bookings[0][start]": target_slot["start"].split(" ")[0] + " " + target_slot["start"].split(" ")[1][:5],
+                    f"bookings[0][end]": target_slot["end"].split(" ")[0] + " " + target_slot["end"].split(" ")[1][:5],
+                    f"bookings[0][checksum]": first_booking["checksum"]
+                }
+
+                second_add_res = session.post(update_url, data=update_payload)
+                
+                if second_add_res.status_code != 200:
+                    error_msg = f"Failed to extend booking to second hour. Status: {second_add_res.status_code}"
+                    monitoring_manager.update_monitoring_status(
+                        request_id, "error", error_message=error_msg
+                    )
+                    result = {
+                        "request_id": request_id,
+                        "success": False,
+                        "available": True,
+                        "booked": False,
+                        "message": error_msg,
+                    }
+                    results.append(result)
+                    continue
+
+                try:
+                    second_add_response_data = second_add_res.json()
+                    print(f"Update booking to second slot response: {second_add_response_data}")
+                except RequestsJSONDecodeError:
+                    error_msg = "Invalid response from booking system for second slot."
+                    monitoring_manager.update_monitoring_status(
+                        request_id, "error", error_message=error_msg
+                    )
+                    result = {
+                        "request_id": request_id,
+                        "success": False,
+                        "available": True,
+                        "booked": False,
+                        "message": error_msg,
+                    }
+                    results.append(result)
+                    continue
+
+                if "bookings" not in second_add_response_data or not second_add_response_data["bookings"]:
+                    error_msg = "No bookings returned for second slot."
+                    monitoring_manager.update_monitoring_status(
+                        request_id, "error", error_message=error_msg
+                    )
+                    result = {
+                        "request_id": request_id,
+                        "success": False,
+                        "available": True,
+                        "booked": False,
+                        "message": error_msg,
+                    }
+                    results.append(result)
+                    continue
+
+                # Update the booking with the extended time
+                all_bookings = [second_add_response_data["bookings"][0]]
+
+            # Submit final booking with all slots
+            book_url = f"{BASE_URL}/ajax/space/book"
+
+            # Format booking object to match the expected structure
+            formatted_bookings = []
+            
+            # For 2-hour bookings, we have one extended booking
+            # For 1-hour bookings, we have one regular booking
+            pending_booking = all_bookings[0]
+            first_slot = target_slots[0]
+            last_slot = target_slots[-1] if len(target_slots) > 1 else target_slots[0]
+            
+            formatted_booking = {
+                "id": 1,
+                "eid": pending_booking.get('eid', first_slot['itemId']),
+                "seat_id": 0,
+                "gid": GID,
+                "lid": LID,
+                "start": first_slot['start'].split(' ')[0] + ' ' + first_slot['start'].split(' ')[1][:5],
+                "end": last_slot['end'].split(' ')[0] + ' ' + last_slot['end'].split(' ')[1][:5],
+                "checksum": pending_booking['checksum']
+            }
+            formatted_bookings.append(formatted_booking)
+
+            final_payload = {
+                "fname": booking_data['firstName'],
+                "lname": booking_data['lastName'],
+                "email": booking_data['email'],
+                "q25689": USER_STATUS_ANSWER,
+                "bookings": json.dumps(formatted_bookings),
+                "returnUrl": f"/spaces?lid={LID}&gid={GID}",
+                "pickupHolds": "",
+                "method": 11,
+            }
+            
+            final_headers = session.headers.copy()
+            if 'Content-Type' in final_headers:
+                del final_headers['Content-Type']
+
+            final_res = session.post(book_url, data=final_payload, headers=final_headers)
+
+            # Check final booking response
+            if final_res.status_code != 200:
+                error_msg = f"Final booking failed. Status: {final_res.status_code}, Response: {final_res.text[:500]}"
+                monitoring_manager.update_monitoring_status(
+                    request_id, "error", error_message=error_msg
+                )
+                result = {
+                    "request_id": request_id,
+                    "success": False,
+                    "available": True,
+                    "booked": False,  
+                    "message": error_msg,
+                }
+                results.append(result)
+                continue
+
+            try:
+                final_response_data = final_res.json()
+            except RequestsJSONDecodeError:
+                error_msg = f"Invalid response from final booking. Response: {final_res.text[:500]}"
+                monitoring_manager.update_monitoring_status(
+                    request_id, "error", error_message=error_msg
+                )
+                result = {
+                    "request_id": request_id,
+                    "success": False,
+                    "available": True,
+                    "booked": False,
+                    "message": error_msg,
+                }
+                results.append(result)
+                continue
+
+            if "bookId" in final_response_data:
+                # Success! Update monitoring request to completed
+                first_slot = target_slots[0]
+                last_slot = target_slots[-1]
+                room_id = first_slot["itemId"]
+                start_display = datetime.strptime(
+                    first_slot["start"], "%Y-%m-%d %H:%M:%S"
+                ).strftime("%-I:%M %p")
+                end_display = datetime.strptime(
+                    last_slot["end"], "%Y-%m-%d %H:%M:%S"
+                ).strftime("%-I:%M %p")
+
+                success_details = {
+                    "slots": target_slots,
+                    "booking_id": final_response_data.get("bookId"),
+                    "booked_at": datetime.utcnow().isoformat(),
+                    "slot_count": len(target_slots),
+                }
+                monitoring_manager.update_monitoring_status(
+                    request_id, "completed", success_details=success_details
+                )
+
+                booked_count += 1
+                result = {
+                    "request_id": request_id,
+                    "success": True,
+                    "available": True,
+                    "booked": True,
+                    "message": f"Successfully booked {len(target_slots)} consecutive slots in Room {room_id} from {start_display} to {end_display}!",
+                    "slots": target_slots,
+                    "booking_id": final_response_data.get("bookId"),
+                }
+                results.append(result)
+            else:
+                error_msg = f"Final booking step failed - no booking ID returned. Response: {final_response_data}"
+                monitoring_manager.update_monitoring_status(
+                    request_id, "error", error_message=error_msg
+                )
+                result = {
+                    "request_id": request_id,
+                    "success": False,
+                    "available": True,
+                    "booked": False,
+                    "message": error_msg,
                 }
                 results.append(result)
 
