@@ -313,14 +313,17 @@ def book_room():
         "Referer": f"{BASE_URL}/spaces?lid={LID}&gid={GID}"
     })
 
+
     # Add to cart
     add_url = f"{BASE_URL}/spaces/availability/booking/add"
     add_payload = {
         "add[eid]": target_slot['itemId'], "add[gid]": GID, "add[lid]": LID,
         "add[start]": target_slot['start'].split(' ')[0] + ' ' + target_slot['start'].split(' ')[1][:5],
+        "add[end]": target_slot['end'].split(' ')[0] + ' ' + target_slot['end'].split(' ')[1][:5],
         "add[checksum]": target_slot['checksum'],
-        "lid": LID, "gid": GID, "start": data['date']
+        "lid": LID, "gid": GID, "start": data['date'], "end": data['date']
     }
+
     add_res = session.post(add_url, data=add_payload)
     
     # Check response status and content before parsing JSON
@@ -347,51 +350,48 @@ def book_room():
     
     pending_booking = add_response_data["bookings"][0]
 
-    # Get session ID
-    times_url = f"{BASE_URL}/ajax/space/times"
-    times_payload = {
-        f"bookings[0][{key}]": val for key, val in pending_booking.items()
-    }
-    times_payload["method"] = 11
-    times_res = session.post(times_url, data=times_payload)
+    # # Get session ID
+    # times_url = f"{BASE_URL}/ajax/space/times"
+    # times_payload = {
+    #     f"bookings[0][{key}]": val for key, val in pending_booking.items()
+    # }
+    # times_payload["method"] = 11
+    # times_res = session.post(times_url, data=times_payload)
     
-    # Check response and parse JSON safely
-    if times_res.status_code != 200:
-        return jsonify({
-            "success": False, 
-            "message": f"Failed to get session ID. Status: {times_res.status_code}, Response: {times_res.text[:500]}"
-        }), 500
-    
-    try:
-        times_response_data = times_res.json()
-        html_content = times_response_data.get("html", "")
-    except RequestsJSONDecodeError:
-        return jsonify({
-            "success": False, 
-            "message": f"Invalid response when getting session ID. Response: {times_res.text[:500]}"
-        }), 500
-    match = re.search(r'id="session" name="session" value="(\d+)"', html_content)
-    if not match:
-        return jsonify({
-            "success": False, 
-            "message": f"Could not find session ID in response. HTML content: {html_content[:500]}"
-        }), 500
-    session_id = match.group(1)
+    # # Check response and parse JSON safely
+    # if times_res.status_code != 200:    
+    #     return jsonify({
+    #         "success": False, 
+    #         "message": f"Failed to get session ID. Status: {times_res.status_code}, Response: {times_res.text[:500]}"
+    #     }), 500
 
     # Submit final booking
     book_url = f"{BASE_URL}/ajax/space/book"
-    pending_booking['start'] = pending_booking['start'].replace(" ", "T")[:16]
-    pending_booking['end'] = pending_booking['end'].replace(" ", "T")[:16]
+    
+    # Format the booking object to match the expected structure
+    formatted_booking = {
+        "id": 1,  # This seems to be a constant based on the successful request
+        "eid": pending_booking.get('eid', target_slot['itemId']),
+        "seat_id": 0,  # Based on the successful request
+        "gid": GID,
+        "lid": LID,
+        "start": target_slot['start'].split(' ')[0] + ' ' + target_slot['start'].split(' ')[1][:5],
+        "end": target_slot['end'].split(' ')[0] + ' ' + target_slot['end'].split(' ')[1][:5],
+        "checksum": add_response_data['bookings'][0]['checksum']
+    }
 
     final_payload = {
-        "session": session_id,
+        # "session": session_id,
         "fname": data['firstName'],
         "lname": data['lastName'],
         "email": data['email'],
         "q25689": USER_STATUS_ANSWER,
-        "bookings": json.dumps([pending_booking]),
-        "returnUrl": f"/spaces?lid={LID}&gid={GID}", "pickupHolds": "", "method": 11,
+        "bookings": json.dumps([formatted_booking]),
+        "returnUrl": f"/spaces?lid={LID}&gid={GID}", 
+        "pickupHolds": "", 
+        "method": 11,
     }
+    print(final_payload)
     final_headers = session.headers.copy()
     if 'Content-Type' in final_headers:
         del final_headers['Content-Type']
@@ -514,6 +514,7 @@ def check_and_book_once():
                 "add[gid]": GID, 
                 "add[lid]": LID,
                 "add[start]": slot_to_book['start'].split(' ')[0] + ' ' + slot_to_book['start'].split(' ')[1][:5],
+                "add[end]": slot_to_book['end'].split(' ')[0] + ' ' + slot_to_book['end'].split(' ')[1][:5],
                 "add[checksum]": slot_to_book['checksum'],
                 "lid": LID, 
                 "gid": GID, 
@@ -535,8 +536,18 @@ def check_and_book_once():
 
             # Submit final booking
             book_url = f"{BASE_URL}/ajax/space/book"
-            pending_booking['start'] = pending_booking['start'].replace(" ", "T")[:16]
-            pending_booking['end'] = pending_booking['end'].replace(" ", "T")[:16]
+            
+            # Format the booking object to match the expected structure
+            formatted_booking = {
+                "id": 1,  # This seems to be a constant based on the successful request
+                "eid": pending_booking.get('eid', slot_to_book['itemId']),
+                "seat_id": 0,  # Based on the successful request
+                "gid": GID,
+                "lid": LID,
+                "start": slot_to_book['start'].split(' ')[0] + ' ' + slot_to_book['start'].split(' ')[1][:5],
+                "end": slot_to_book['end'].split(' ')[0] + ' ' + slot_to_book['end'].split(' ')[1][:5],
+                "checksum": slot_to_book['checksum']
+            }
 
             final_payload = {
                 "session": session_id,
@@ -544,7 +555,7 @@ def check_and_book_once():
                 "lname": data['lastName'],
                 "email": data['email'],
                 "q25689": USER_STATUS_ANSWER,
-                "bookings": json.dumps([pending_booking]),
+                "bookings": json.dumps([formatted_booking]),
                 "returnUrl": f"/spaces?lid={LID}&gid={GID}", 
                 "pickupHolds": "", "method": 11,
             }
@@ -712,6 +723,7 @@ def check_and_book_for_request(request_id):
                 "add[gid]": GID, 
                 "add[lid]": LID,
                 "add[start]": slot_to_book['start'].split(' ')[0] + ' ' + slot_to_book['start'].split(' ')[1][:5],
+                "add[end]": slot_to_book['end'].split(' ')[0] + ' ' + slot_to_book['end'].split(' ')[1][:5],
                 "add[checksum]": slot_to_book['checksum'],
                 "lid": LID, 
                 "gid": GID, 
@@ -721,28 +733,37 @@ def check_and_book_for_request(request_id):
             pending_booking = add_res.json().get("bookings", [])[0]
 
             # Get session ID
-            times_url = f"{BASE_URL}/ajax/space/times"
-            times_payload = {
-                f"bookings[0][{key}]": val for key, val in pending_booking.items()
-            }
-            times_payload["method"] = 11
-            times_res = session.post(times_url, data=times_payload)
-            html_content = times_res.json().get("html", "")
-            match = re.search(r'id="session" name="session" value="(\d+)"', html_content)
-            session_id = match.group(1)
+            # times_url = f"{BASE_URL}/ajax/space/times"
+            # times_payload = {
+            #     f"bookings[0][{key}]": val for key, val in pending_booking.items()
+            # }
+            # times_payload["method"] = 11
+            # times_res = session.post(times_url, data=times_payload)
+            # html_content = times_res.json().get("html", "")
+            # match = re.search(r'id="session" name="session" value="(\d+)"', html_content)
+            # session_id = match.group(1)
 
             # Submit final booking
             book_url = f"{BASE_URL}/ajax/space/book"
-            pending_booking['start'] = pending_booking['start'].replace(" ", "T")[:16]
-            pending_booking['end'] = pending_booking['end'].replace(" ", "T")[:16]
+            
+            # Format the booking object to match the expected structure
+            formatted_booking = {
+                "id": 1,  # This seems to be a constant based on the successful request
+                "eid": pending_booking.get('eid', slot_to_book['itemId']),
+                "seat_id": 0,  # Based on the successful request
+                "gid": GID,
+                "lid": LID,
+                "start": slot_to_book['start'].split(' ')[0] + ' ' + slot_to_book['start'].split(' ')[1][:5],
+                "end": slot_to_book['end'].split(' ')[0] + ' ' + slot_to_book['end'].split(' ')[1][:5],
+                "checksum": slot_to_book['checksum']
+            }
 
             final_payload = {
-                "session": session_id,
                 "fname": booking_data['firstName'],
                 "lname": booking_data['lastName'],
                 "email": booking_data['email'],
                 "q25689": USER_STATUS_ANSWER,
-                "bookings": json.dumps([pending_booking]),
+                "bookings": json.dumps([formatted_booking]),
                 "returnUrl": f"/spaces?lid={LID}&gid={GID}", 
                 "pickupHolds": "", 
                 "method": 11,
@@ -959,6 +980,7 @@ def check_all_monitoring_requests():
                     "add[gid]": GID, 
                     "add[lid]": LID,
                     "add[start]": slot_to_book['start'].split(' ')[0] + ' ' + slot_to_book['start'].split(' ')[1][:5],
+                    "add[end]": slot_to_book['end'].split(' ')[0] + ' ' + slot_to_book['end'].split(' ')[1][:5],
                     "add[checksum]": slot_to_book['checksum'],
                     "lid": LID, 
                     "gid": GID, 
@@ -980,8 +1002,18 @@ def check_all_monitoring_requests():
 
                 # Submit final booking
                 book_url = f"{BASE_URL}/ajax/space/book"
-                pending_booking['start'] = pending_booking['start'].replace(" ", "T")[:16]
-                pending_booking['end'] = pending_booking['end'].replace(" ", "T")[:16]
+                
+                # Format the booking object to match the expected structure
+                formatted_booking = {
+                    "id": 1,  # This seems to be a constant based on the successful request
+                    "eid": pending_booking.get('eid', slot_to_book['itemId']),
+                    "seat_id": 0,  # Based on the successful request
+                    "gid": GID,
+                    "lid": LID,
+                    "start": slot_to_book['start'].split(' ')[0] + ' ' + slot_to_book['start'].split(' ')[1][:5],
+                    "end": slot_to_book['end'].split(' ')[0] + ' ' + slot_to_book['end'].split(' ')[1][:5],
+                    "checksum": slot_to_book['checksum']
+                }
 
                 final_payload = {
                     "session": session_id,
@@ -989,7 +1021,7 @@ def check_all_monitoring_requests():
                     "lname": booking_data['lastName'],
                     "email": booking_data['email'],
                     "q25689": USER_STATUS_ANSWER,
-                    "bookings": json.dumps([pending_booking]),
+                    "bookings": json.dumps([formatted_booking]),
                     "returnUrl": f"/spaces?lid={LID}&gid={GID}", 
                     "pickupHolds": "", 
                     "method": 11,
