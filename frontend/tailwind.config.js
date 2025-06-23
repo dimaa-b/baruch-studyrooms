@@ -6,6 +6,18 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        'torque': ['Torque', 'sans-serif'],
+        'torque-inline': ['Torque Inline', 'sans-serif'],
+        'sans': ['Torque', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', 'sans-serif'],
+      },
+      fontWeight: {
+        'light': 300,
+        'normal': 400,
+        'medium': 500,
+        'bold': 700,
+        'ultra': 900,
+      },
       colors: {
         primary: {
           DEFAULT: '#1B38E2',
