@@ -39,7 +39,7 @@ const Header = () => {
             <div className="flex justify-between items-center">
               {/* Logo/Brand */}
               <div className="flex items-center">
-                <h1 className="text-2xl font-ultra text-black tracking-tight font-torque-inline">
+                <h1 className="text-2xl font-black text-black tracking-tight font-royal">
                   baruch study rooms
                 </h1>
               </div>
@@ -52,7 +52,7 @@ const Header = () => {
                   <div className="relative" ref={profileRef}>
                     <button
                       onClick={handleAuthClick}
-                      className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-black hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 rounded-full transition-colors duration-200 font-torque"
+                      className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-black hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 rounded-full transition-colors duration-200 font-royal"
                     >
                       {isAuthenticated ? (
                         <>

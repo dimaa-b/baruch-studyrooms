@@ -30,10 +30,10 @@ const Dashboard = () => {
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedTime, setSelectedTime] = useState('09:00');
     const [selectedDuration, setSelectedDuration] = useState('1');
-    const [searchTerm, setSearchTerm] = useState('');
     const [availabilityData, setAvailabilityData] = useState<AvailabilityData>({});
     const [selectedSlot, setSelectedSlot] = useState<{roomId: string, slot: TimeSlot} | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [isBooking, setIsBooking] = useState(false);
 
     // Mock booking data - replace with actual API calls
 
@@ -78,7 +78,7 @@ const Dashboard = () => {
     }, [selectedDate]);
 
     // Handle slot selection for booking - find any available room at the selected time
-    const handleSlotClick = (slotIndex: number, displayTime: string) => {
+    const handleSlotClick = (slotIndex: number, _displayTime: string) => {
         // Find the first available room at this time slot
         const roomIds = Object.keys(availabilityData);
         for (const roomId of roomIds) {
@@ -110,6 +110,43 @@ const Dashboard = () => {
         return `${hour24.toString().padStart(2, '0')}:${minutes}`;
     };
 
+    // Helper function to convert 24-hour time to 12-hour display format
+    const convertToDisplayTime = (time24: string) => {
+        const [hours, minutes] = time24.split(':');
+        let hour = parseInt(hours);
+        const period = hour >= 12 ? 'PM' : 'AM';
+        
+        if (hour === 0) hour = 12;
+        else if (hour > 12) hour -= 12;
+        
+        return `${hour}:${minutes} ${period}`;
+    };
+
+    // Handle time dropdown change and select corresponding slot
+    const handleTimeChange = (newTime: string) => {
+        setSelectedTime(newTime);
+        
+        // Convert selected time to display format and find matching slot
+        const displayTime = convertToDisplayTime(newTime);
+        const timeSlots = getTimeSlots();
+        const slotIndex = timeSlots.findIndex(slot => slot === displayTime);
+        
+        if (slotIndex !== -1) {
+            // Find the first available room at this time slot
+            const roomIds = Object.keys(availabilityData);
+            for (const roomId of roomIds) {
+                const slot = availabilityData[roomId][slotIndex];
+                if (slot && slot.available) {
+                    setSelectedSlot({ roomId, slot });
+                    break;
+                }
+            }
+        } else {
+            // Clear selection if time not found in availability
+            setSelectedSlot(null);
+        }
+    };
+
     // Get all unique time slots for the grid header
     const getTimeSlots = () => {
         const roomIds = Object.keys(availabilityData);
@@ -132,13 +169,62 @@ const Dashboard = () => {
         });
     };
 
-    const handleBookRoom = () => {
-        if (selectedSlot) {
-            console.log(`Booking room ${selectedSlot.roomId} for ${selectedDate} at ${selectedSlot.slot.displayTime} for ${selectedDuration} hour(s)`);
-            console.log('Slot details:', selectedSlot.slot);
-            alert(`Booking room ${selectedSlot.roomId} at ${selectedSlot.slot.displayTime}!`);
-        } else {
+    const handleBookRoom = async () => {
+        if (!selectedSlot) {
             alert('Please select a time slot from the availability grid first!');
+            return;
+        }
+
+        // Check if user info is available (either from auth or form inputs would be needed)
+        if (!user) {
+            alert('Please log in to book a time slot, or ensure your user information is available.');
+            return;
+        }
+
+        setIsBooking(true);
+        
+        try {
+            // Prepare booking data
+            const bookingData = {
+                date: selectedDate,
+                startTime: selectedSlot.slot.start,
+                duration: parseInt(selectedDuration),
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email
+            };
+
+            console.log('Sending booking request:', bookingData);
+
+            const response = await fetch('http://localhost:5001/api/book', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include', // Include cookies for authentication
+                body: JSON.stringify(bookingData)
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                // Success - show detailed information
+                const booking = result.booking;
+                alert(`🎉 Booking Successful!\n\n${result.message}\n\nDetails:\n• Time: ${booking.display_time}\n• Date: ${selectedDate}\n• Booking ID: ${booking.booking_id}`);
+                
+                // Clear the selected slot
+                setSelectedSlot(null);
+                // Refresh availability data
+                fetchAvailability(selectedDate);
+            } else {
+                // Error from server
+                alert(`❌ Booking Failed\n\n${result.message || result.error || 'Unknown error occurred'}`);
+            }
+        } catch (error) {
+            console.error('Error booking time slot:', error);
+            alert('❌ Network Error\n\nAn error occurred while booking the time slot. Please check your connection and try again.');
+        } finally {
+            setIsBooking(false);
         }
     };
 
@@ -151,7 +237,7 @@ const Dashboard = () => {
                 <div className="container mx-auto max-w-7xl">
                     {/* Welcome Section */}
                     <div className="mb-6 sm:mb-8">
-                        <h1 className="text-3xl sm:text-4xl md:text-5xl font-ultra mb-4 text-white font-torque">
+                        <h1 className="text-3xl sm:text-4xl md:text-5xl font-black mb-4 text-white font-royal">
                             Welcome back, {user?.firstName}!
                         </h1>
                     </div>
@@ -159,18 +245,18 @@ const Dashboard = () => {
                     {/* Quick Stats */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
                         <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 sm:p-6 border-2 border-black border-opacity-90">
-                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-torque">Total Rooms</h3>
-                            <p className="text-2xl sm:text-3xl font-ultra text-black font-torque">{Object.keys(availabilityData).length}</p>
+                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-royal">Available Times</h3>
+                            <p className="text-2xl sm:text-3xl font-black text-black font-royal">{Object.values(availabilityData).flat().filter(slot => slot.available).length}</p>
                         </div>
                         <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 sm:p-6 border-2 border-black border-opacity-90">
-                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-torque">Available Slots</h3>
-                            <p className="text-2xl sm:text-3xl font-ultra text-black font-torque">
+                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-royal">Available Slots</h3>
+                            <p className="text-2xl sm:text-3xl font-black text-black font-royal">
                                 {Object.values(availabilityData).flat().filter(slot => slot.available).length}
                             </p>
                         </div>
                         <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 sm:p-6 border-2 border-black border-opacity-90">
-                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-torque">Your Bookings</h3>
-                            <p className="text-2xl sm:text-3xl font-ultra text-black font-torque">{myBookings.length}</p>
+                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-royal">Your Bookings</h3>
+                            <p className="text-2xl sm:text-3xl font-black text-black font-royal">{myBookings.length}</p>
                         </div>
                     </div>
 
@@ -178,7 +264,7 @@ const Dashboard = () => {
                         {/* Booking Form */}
                         <div className="xl:col-span-1 order-2 xl:order-1"> 
                             <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 sm:p-6 border-2 border-black border-opacity-90 xl:sticky xl:top-24">
-                                <h2 className="text-2xl font-bold mb-6 text-black font-torque">Book a Room</h2>
+                                <h2 className="text-2xl font-bold mb-6 text-black font-royal">Book a Time Slot</h2>
                                 
                                 <div className="space-y-4">
                                     <div>
@@ -195,11 +281,10 @@ const Dashboard = () => {
                                         <label className="block text-sm font-medium mb-2 text-black">Time</label>
                                         <select
                                             value={selectedTime}
-                                            onChange={(e) => setSelectedTime(e.target.value)}
+                                            onChange={(e) => handleTimeChange(e.target.value)}
                                             className="w-full px-4 py-2 rounded-lg bg-white bg-opacity-20 border border-white border-opacity-30 text-black focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50"
                                         >
-                                            <option value="09:00">9:00 AM</option>
-                                            <option value="10:00">10:00 AM</option>
+                                            {/* should be linked to the available times */}
                                             <option value="11:00">11:00 AM</option>
                                             <option value="12:00">12:00 PM</option>
                                             <option value="13:00">1:00 PM</option>
@@ -219,38 +304,28 @@ const Dashboard = () => {
                                         >
                                             <option value="1">1 hour</option>
                                             <option value="2">2 hours</option>
-                                            <option value="3">3 hours</option>
-                                            <option value="4">4 hours</option>
                                         </select>
-                                    </div>
-                                    
-                                    <div>
-                                        <label className="block text-sm font-medium mb-2 text-black">Search Rooms</label>
-                                        <input
-                                            type="text"
-                                            placeholder="Search by name or location..."
-                                            value={searchTerm}
-                                            onChange={(e) => setSearchTerm(e.target.value)}
-                                            className="w-full px-4 py-2 rounded-lg bg-white bg-opacity-20 border border-white border-opacity-30 text-black placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50"
-                                        />
                                     </div>
                                     
                                     <button
                                         onClick={handleBookRoom}
-                                        disabled={!selectedSlot}
+                                        disabled={!selectedSlot || isBooking}
                                         className={`w-full py-3 px-4 rounded-lg font-semibold transition-colors ${
-                                            selectedSlot
-                                                ? 'bg-white text-[#1B38E2] hover:bg-gray-100'
+                                            selectedSlot && !isBooking
+                                                ? 'bg-blue-400 text-white hover:bg-blue-500 border-2 border-black'
                                                 : 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                         }`}
                                     >
-                                        {selectedSlot ? `Book Room ${selectedSlot.roomId}` : 'Select a Time Slot'}
+                                        {isBooking 
+                                            ? 'Booking...' 
+                                            : 'Select a Time Slot'
+                                        }
                                     </button>
                                     
                                     {selectedSlot && (
-                                        <div className="p-3 bg-blue-500 bg-opacity-20 rounded-lg border border-blue-500">
+                                        <div className="p-3 bg-blue-400 bg-opacity-20 rounded-lg border border-blue-500">
                                             <p className="text-black text-sm font-medium">
-                                                Selected: Room {selectedSlot.roomId}
+                                                Selected Time Slot
                                             </p>
                                             <p className="text-black text-sm">
                                                 {selectedSlot.slot.displayTime} ({selectedDuration} hour{selectedDuration !== '1' ? 's' : ''})
@@ -263,7 +338,7 @@ const Dashboard = () => {
 
                         {/* Availability Grid */}
                         <div className="xl:col-span-2 order-1 xl:order-2">
-                            <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white font-torque">Room Availability</h2>
+                            <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white font-royal">Time Availability</h2>
                             
                             {isLoading ? (
                                 <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-8 border-2 border-black border-opacity-90">
@@ -286,7 +361,7 @@ const Dashboard = () => {
                                         {/* Consolidated Availability Row */}
                                         <div className="grid grid-cols-[60px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1">
                                             <div className="text-xs font-medium text-black p-1 bg-white bg-opacity-20 rounded flex items-center">
-                                                <span className="truncate">Any Room</span>
+                                                <span className="truncate">Time Slots</span>
                                             </div>
                                             {getConsolidatedAvailability().map((consolidatedSlot, index) => (
                                                 <button
@@ -300,7 +375,7 @@ const Dashboard = () => {
                                                                 : 'bg-green-500 text-white hover:bg-green-600 cursor-pointer active:bg-green-700'
                                                             : 'bg-red-500 text-white cursor-not-allowed opacity-75'
                                                     }`}
-                                                    title={`${consolidatedSlot.displayTime} - ${consolidatedSlot.available ? 'Available' : 'No rooms available'}`}
+                                                    title={`${consolidatedSlot.displayTime} - ${consolidatedSlot.available ? 'Available' : 'No availability'}`}
                                                 >
                                                     <span className="block">{consolidatedSlot.available ? '✓' : '✗'}</span>
                                                 </button>
@@ -329,17 +404,6 @@ const Dashboard = () => {
                                                 Tap time slots to select them
                                             </p>
                                         </div>
-                                        
-                                        {selectedSlot && (
-                                            <div className="mt-3 p-3 bg-blue-500 bg-opacity-20 rounded-lg border border-blue-500">
-                                                <p className="text-black font-medium text-sm">
-                                                    Selected: Room {selectedSlot.roomId} at {selectedSlot.slot.displayTime}
-                                                </p>
-                                                <p className="text-gray-700 text-xs">
-                                                    {selectedSlot.slot.start} - {selectedSlot.slot.end}
-                                                </p>
-                                            </div>
-                                        )}
                                     </div>
                                 </div>
                             ) : (
@@ -355,7 +419,7 @@ const Dashboard = () => {
 
                     {/* My Bookings Section */}
                     <div className="mt-8 sm:mt-12">
-                        <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white font-torque">My Bookings</h2>
+                        <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white font-royal">My Bookings</h2>
                         
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                             {myBookings.map((booking) => (
@@ -365,7 +429,7 @@ const Dashboard = () => {
                                 >
                                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-4 gap-3">
                                         <div className="flex-1">
-                                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-torque">{booking.roomName}</h3>
+                                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-royal">{booking.roomName}</h3>
                                             <p className="text-sm text-gray-700 font-medium">{booking.date}</p>
                                             <p className="text-sm text-gray-700 font-medium">🕐 {booking.time} • {booking.duration}</p>
                                         </div>
@@ -394,7 +458,7 @@ const Dashboard = () => {
                         
                         {myBookings.length === 0 && (
                             <div className="text-center py-8 sm:py-12">
-                                <p className="text-gray-700 text-base sm:text-lg">No bookings yet. Book your first study room above!</p>
+                                <p className="text-gray-700 text-base sm:text-lg">No bookings yet. Book your first study time above!</p>
                             </div>
                         )}
                     </div>

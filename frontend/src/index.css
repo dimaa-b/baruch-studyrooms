@@ -1,51 +1,115 @@
 @import "tailwindcss";
 
-/* Torque Font Family */
+/* Royal Gothic Font Family */
 @font-face {
-  font-family: 'Torque';
-  src: url('./assets/fonts/torquetrial-light.otf') format('opentype');
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-Thin-Trial.otf') format('opentype');
+  font-weight: 100;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-ThinItalic-Trial.otf') format('opentype');
+  font-weight: 100;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-Light-Trial.otf') format('opentype');
   font-weight: 300;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Torque';
-  src: url('./assets/fonts/torquetrial-book.otf') format('opentype');
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-LightItalic-Trial.otf') format('opentype');
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-Regular-Trial.otf') format('opentype');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Torque';
-  src: url('./assets/fonts/torquetrial-medium.otf') format('opentype');
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-RegularItalic-Trial.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-Medium-Trial.otf') format('opentype');
   font-weight: 500;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Torque';
-  src: url('./assets/fonts/torquetrial-bold.otf') format('opentype');
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-MediumItalic-Trial.otf') format('opentype');
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-Bold-Trial.otf') format('opentype');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Torque';
-  src: url('./assets/fonts/torquetrial-ultra.otf') format('opentype');
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-BoldItalic-Trial.otf') format('opentype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-Black-Trial.otf') format('opentype');
   font-weight: 900;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Torque Inline';
-  src: url('./assets/fonts/torquetrial-inline.otf') format('opentype');
-  font-weight: 400;
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-BlackItalic-Trial.otf') format('opentype');
+  font-weight: 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-Fat-Trial.otf') format('opentype');
+  font-weight: 950;
   font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Royal Gothic';
+  src: url('./assets/fonts/RoyalGothic-FatItalic-Trial.otf') format('opentype');
+  font-weight: 950;
+  font-style: italic;
   font-display: swap;
 }
 

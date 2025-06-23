@@ -7,16 +7,17 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        'torque': ['Torque', 'sans-serif'],
-        'torque-inline': ['Torque Inline', 'sans-serif'],
-        'sans': ['Torque', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', 'sans-serif'],
+        'royal': ['Royal Gothic', 'sans-serif'],
+        'sans': ['Royal Gothic', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', 'sans-serif'],
       },
       fontWeight: {
+        'thin': 100,
         'light': 300,
         'normal': 400,
         'medium': 500,
         'bold': 700,
-        'ultra': 900,
+        'black': 900,
+        'fat': 950,
       },
       colors: {
         primary: {

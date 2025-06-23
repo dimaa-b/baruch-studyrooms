@@ -52,7 +52,7 @@ const LoginForm = ({ onSwitchToRegister, onClose }: LoginFormProps) => {
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2 font-torque">
+          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2 font-royal">
             email or username
           </label>
           <input
@@ -62,13 +62,13 @@ const LoginForm = ({ onSwitchToRegister, onClose }: LoginFormProps) => {
             value={formData.email}
             onChange={handleChange}
             required
-            className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:border-[#1B38E2] transition-colors font-torque"
+            className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:border-[#1B38E2] transition-colors font-royal"
             placeholder="enter your email or username"
           />
         </div>
 
         <div>
-          <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2 font-torque">
+          <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2 font-royal">
             password
           </label>
           <input
@@ -78,7 +78,7 @@ const LoginForm = ({ onSwitchToRegister, onClose }: LoginFormProps) => {
             value={formData.password}
             onChange={handleChange}
             required
-            className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:border-[#1B38E2] transition-colors font-torque"
+            className="w-full px-4 py-3 border border-gray-300 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:border-[#1B38E2] transition-colors font-royal"
             placeholder="enter your password"
           />
         </div>
@@ -86,18 +86,18 @@ const LoginForm = ({ onSwitchToRegister, onClose }: LoginFormProps) => {
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full bg-[#1B38E2] text-white py-3 px-4 rounded-xl hover:bg-[#1530c7] focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium font-torque"
+          className="w-full bg-[#1B38E2] text-white py-3 px-4 rounded-xl hover:bg-[#1530c7] focus:outline-none focus:ring-2 focus:ring-[#1B38E2] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium font-royal"
         >
           {isLoading ? 'signing in...' : 'sign in'}
         </button>
       </form>
 
       <div className="mt-8 text-center">
-        <p className="text-sm text-gray-600 font-torque">
+        <p className="text-sm text-gray-600 font-royal">
           don't have an account?{' '}
           <button
             onClick={onSwitchToRegister}
-            className="text-[#1B38E2] hover:text-[#1530c7] font-medium transition-colors font-torque"
+            className="text-[#1B38E2] hover:text-[#1530c7] font-medium transition-colors font-royal"
           >
             sign up
           </button>
