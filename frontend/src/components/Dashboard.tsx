@@ -16,13 +16,26 @@ interface AvailabilityData {
   [roomId: string]: TimeSlot[];
 }
 
-interface Booking {
-  id: string;
-  roomName: string;
-  date: string;
-  time: string;
-  duration: string;
-  status: 'confirmed' | 'pending' | 'cancelled';
+interface MonitoringRequest {
+  request_id: string;
+  target_date: string;
+  start_time: string;
+  end_time: string;
+  duration_hours?: number;
+  status: 'active' | 'completed' | 'stopped' | 'expired' | 'error';
+  created_at: string;
+  check_count?: number;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  room_preference?: string;
+  success_details?: {
+    slots: any[];
+    booking_id: string;
+    booked_at: string;
+    slot_count: number;
+  };
+  error_message?: string;
 }
 
 const Dashboard = () => {
@@ -34,27 +47,26 @@ const Dashboard = () => {
     const [selectedSlot, setSelectedSlot] = useState<{roomId: string, slot: TimeSlot} | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isBooking, setIsBooking] = useState(false);
+    const [monitoringRequests, setMonitoringRequests] = useState<MonitoringRequest[]>([]);
+    const [isLoadingBookings, setIsLoadingBookings] = useState(false);
 
-    // Mock booking data - replace with actual API calls
-
-    const myBookings: Booking[] = [
-        {
-            id: '1',
-            roomName: 'Newman Library - Study Room A',
-            date: '2025-06-22',
-            time: '2:00 PM',
-            duration: '2 hours',
-            status: 'confirmed',
-        },
-        {
-            id: '2',
-            roomName: 'Vertical Campus - Group Study Room',
-            date: '2025-06-23',
-            time: '10:00 AM',
-            duration: '1 hour',
-            status: 'pending',
-        },
-    ];
+    // Fetch monitoring requests from API
+    const fetchMonitoringRequests = async () => {
+        setIsLoadingBookings(true);
+        try {
+            const response = await fetch('http://localhost:5001/api/monitoring/list', {
+                credentials: 'include', // Include cookies for authentication
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setMonitoringRequests(data.requests || []);
+            }
+        } catch (error) {
+            console.error('Error fetching monitoring requests:', error);
+        } finally {
+            setIsLoadingBookings(false);
+        }
+    };
 
     // Fetch availability data from API
     const fetchAvailability = async (date: string) => {
@@ -76,6 +88,87 @@ const Dashboard = () => {
     useEffect(() => {
         fetchAvailability(selectedDate);
     }, [selectedDate]);
+
+    // Fetch monitoring requests when component mounts
+    useEffect(() => {
+        fetchMonitoringRequests();
+    }, []);
+
+    // Convert monitoring request to display format
+    const formatMonitoringRequestForDisplay = (request: MonitoringRequest) => {
+        const startTime = request.start_time;
+        const endTime = request.end_time;
+        
+        // Convert 24-hour time to 12-hour display format
+        const formatTime = (time: string) => {
+            const [hours, minutes] = time.split(':');
+            let hour = parseInt(hours);
+            const period = hour >= 12 ? 'PM' : 'AM';
+            
+            if (hour === 0) hour = 12;
+            else if (hour > 12) hour -= 12;
+            
+            return `${hour}:${minutes} ${period}`;
+        };
+
+        const displayTime = `${formatTime(startTime)} - ${formatTime(endTime)}`;
+        const duration = request.duration_hours ? `${request.duration_hours} hour${request.duration_hours !== 1 ? 's' : ''}` : 'Unknown';
+        
+        let displayStatus: 'confirmed' | 'pending' | 'cancelled';
+        let roomName = 'Study Room';
+        
+        if (request.status === 'completed' && request.success_details?.booking_id) {
+            displayStatus = 'confirmed';
+            // Extract room info if available
+            if (request.success_details.slots && request.success_details.slots.length > 0) {
+                const roomId = request.success_details.slots[0].itemId;
+                roomName = `Study Room ${roomId}`;
+            }
+        } else if (request.status === 'active') {
+            displayStatus = 'pending';
+            roomName = `Monitoring for Room ${request.room_preference || 'Any'}`;
+        } else {
+            displayStatus = 'cancelled';
+            roomName = `Request ${request.status}`;
+        }
+
+        return {
+            id: request.request_id,
+            roomName,
+            date: request.target_date,
+            time: displayTime,
+            duration,
+            status: displayStatus,
+            monitoringRequest: request, // Keep reference to original request
+        };
+    };
+
+    // Get all bookings (converted monitoring requests)
+    const getAllBookings = () => {
+        return monitoringRequests.map(formatMonitoringRequestForDisplay);
+    };
+
+    // Stop a monitoring request
+    const stopMonitoringRequest = async (requestId: string) => {
+        try {
+            const response = await fetch(`http://localhost:5001/api/monitoring/${requestId}/stop`, {
+                method: 'POST',
+                credentials: 'include',
+            });
+            
+            if (response.ok) {
+                alert('✅ Monitoring request stopped successfully!');
+                // Refresh the monitoring requests
+                fetchMonitoringRequests();
+            } else {
+                const error = await response.json();
+                alert(`❌ Failed to stop monitoring request: ${error.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Error stopping monitoring request:', error);
+            alert('❌ Network error while stopping monitoring request. Please try again.');
+        }
+    };
 
     // Handle slot selection for booking - find any available room at the selected time
     const handleSlotClick = (slotIndex: number, _displayTime: string) => {
@@ -216,6 +309,8 @@ const Dashboard = () => {
                 setSelectedSlot(null);
                 // Refresh availability data
                 fetchAvailability(selectedDate);
+                // Refresh monitoring requests to see any updates
+                fetchMonitoringRequests();
             } else {
                 // Error from server
                 alert(`❌ Booking Failed\n\n${result.message || result.error || 'Unknown error occurred'}`);
@@ -255,8 +350,8 @@ const Dashboard = () => {
                             </p>
                         </div>
                         <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 sm:p-6 border-2 border-black border-opacity-90">
-                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-royal">Your Bookings</h3>
-                            <p className="text-2xl sm:text-3xl font-black text-black font-royal">{myBookings.length}</p>
+                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-royal">Your Requests</h3>
+                            <p className="text-2xl sm:text-3xl font-black text-black font-royal">{monitoringRequests.length}</p>
                         </div>
                     </div>
 
@@ -404,6 +499,63 @@ const Dashboard = () => {
                                                 Tap time slots to select them
                                             </p>
                                         </div>
+                                        
+                                        {/* Separator */}
+                                        <div className="my-6 border-t border-white border-opacity-20"></div>
+                                        
+                                        {/* Individual Room Availability */}
+                                        <div>
+                                            <h3 className="text-lg font-bold mb-4 text-black font-royal">Individual Room Details</h3>
+                                            <div className="space-y-3">
+                                                {Object.entries(availabilityData).map(([roomId, roomSlots]) => (
+                                                    <div key={roomId} className="bg-white bg-opacity-10 rounded-lg p-3">
+                                                        <h4 className="text-base font-bold mb-2 text-black font-royal">
+                                                            Study Room {roomId}
+                                                        </h4>
+                                                        
+                                                        {/* Single row layout matching the top section */}
+                                                        <div className="grid grid-cols-[60px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1">
+                                                            <div className="text-xs font-medium text-black p-1 bg-white bg-opacity-20 rounded flex items-center">
+                                                                <span className="truncate">Room {roomId}</span>
+                                                            </div>
+                                                            {roomSlots.map((slot, index) => (
+                                                                <button
+                                                                    key={index}
+                                                                    onClick={() => handleSlotClick(index, slot.displayTime)}
+                                                                    disabled={!slot.available}
+                                                                    className={`p-0.5 sm:p-1 rounded text-xs font-medium transition-colors min-h-[20px] sm:min-h-[24px] touch-manipulation ${
+                                                                        slot.available
+                                                                            ? selectedSlot && selectedSlot.roomId === roomId && selectedSlot.slot.displayTime === slot.displayTime
+                                                                                ? 'bg-blue-500 text-white border-2 border-blue-700'
+                                                                                : 'bg-green-500 text-white hover:bg-green-600 cursor-pointer active:bg-green-700'
+                                                                            : 'bg-red-500 text-white cursor-not-allowed opacity-75'
+                                                                    }`}
+                                                                    title={`${slot.displayTime} - ${slot.available ? 'Available' : 'Occupied'}`}
+                                                                >
+                                                                    <span className="block">{slot.available ? '✓' : '✗'}</span>
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                        
+                                                        {/* Room-specific stats */}
+                                                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                                            <div className="flex items-center gap-1">
+                                                                <span className="text-black font-medium">Available:</span>
+                                                                <span className="text-green-700 font-bold">
+                                                                    {roomSlots.filter(slot => slot.available).length}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex items-center gap-1">
+                                                                <span className="text-black font-medium">Occupied:</span>
+                                                                <span className="text-red-700 font-bold">
+                                                                    {roomSlots.filter(slot => !slot.available).length}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             ) : (
@@ -419,46 +571,70 @@ const Dashboard = () => {
 
                     {/* My Bookings Section */}
                     <div className="mt-8 sm:mt-12">
-                        <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white font-royal">My Bookings</h2>
+                        <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white font-royal">My Booking Requests</h2>
                         
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                            {myBookings.map((booking) => (
-                                <div
-                                    key={booking.id}
-                                    className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 sm:p-6 border-2 border-black border-opacity-90"
-                                >
-                                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-4 gap-3">
-                                        <div className="flex-1">
-                                            <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-royal">{booking.roomName}</h3>
-                                            <p className="text-sm text-gray-700 font-medium">{booking.date}</p>
-                                            <p className="text-sm text-gray-700 font-medium">🕐 {booking.time} • {booking.duration}</p>
+                        {isLoadingBookings ? (
+                            <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-8 border-2 border-black border-opacity-90">
+                                <div className="text-center text-black">Loading your requests...</div>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+                                {getAllBookings().map((booking) => (
+                                    <div
+                                        key={booking.id}
+                                        className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 sm:p-6 border-2 border-black border-opacity-90"
+                                    >
+                                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-4 gap-3">
+                                            <div className="flex-1">
+                                                <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-royal">{booking.roomName}</h3>
+                                                <p className="text-sm text-gray-700 font-medium">{booking.date}</p>
+                                                <p className="text-sm text-gray-700 font-medium">🕐 {booking.time} • {booking.duration}</p>
+                                                {booking.monitoringRequest && booking.monitoringRequest.check_count !== undefined && (
+                                                    <p className="text-xs text-gray-600 mt-1">Checked {booking.monitoringRequest.check_count} times</p>
+                                                )}
+                                                {booking.monitoringRequest?.success_details?.booking_id && (
+                                                    <p className="text-xs text-green-700 mt-1">Booking ID: {booking.monitoringRequest.success_details.booking_id}</p>
+                                                )}
+                                                {booking.monitoringRequest?.error_message && (
+                                                    <p className="text-xs text-red-700 mt-1">Error: {booking.monitoringRequest.error_message}</p>
+                                                )}
+                                            </div>
+                                            <span className={`px-3 py-1 rounded-full text-xs sm:text-sm font-medium self-start ${
+                                                booking.status === 'confirmed'
+                                                    ? 'bg-green-500 text-white'
+                                                    : booking.status === 'pending'
+                                                    ? 'bg-yellow-500 text-white'
+                                                    : 'bg-red-500 text-white'
+                                            }`}>
+                                                {booking.status === 'confirmed' ? 'Booked' : 
+                                                 booking.status === 'pending' ? 'Monitoring' : 
+                                                 booking.monitoringRequest?.status || 'Cancelled'}
+                                            </span>
                                         </div>
-                                        <span className={`px-3 py-1 rounded-full text-xs sm:text-sm font-medium self-start ${
-                                            booking.status === 'confirmed'
-                                                ? 'bg-green-500 text-white'
-                                                : booking.status === 'pending'
-                                                ? 'bg-yellow-500 text-white'
-                                                : 'bg-red-500 text-white'
-                                        }`}>
-                                            {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
-                                        </span>
+                                        
+                                        <div className="flex flex-col sm:flex-row gap-2">
+                                            {booking.status === 'pending' && (
+                                                <button 
+                                                    onClick={() => stopMonitoringRequest(booking.id)}
+                                                    className="flex-1 py-2 px-4 rounded-lg font-semibold text-sm bg-red-500 hover:bg-red-600 transition-colors text-white"
+                                                >
+                                                    Stop Monitoring
+                                                </button>
+                                            )}
+                                            {booking.status === 'confirmed' && (
+                                                <button className="flex-1 py-2 px-4 rounded-lg font-semibold text-sm bg-white bg-opacity-20 hover:bg-opacity-30 transition-colors">
+                                                    View Details
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
-                                    
-                                    <div className="flex flex-col sm:flex-row gap-2">
-                                        <button className="flex-1 py-2 px-4 rounded-lg font-semibold text-sm bg-white bg-opacity-20 hover:bg-opacity-30 transition-colors">
-                                            Modify
-                                        </button>
-                                        <button className="flex-1 py-2 px-4 rounded-lg font-semibold text-sm bg-red-500 hover:bg-red-600 transition-colors text-white">
-                                            Cancel
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
+                        )}
                         
-                        {myBookings.length === 0 && (
+                        {!isLoadingBookings && monitoringRequests.length === 0 && (
                             <div className="text-center py-8 sm:py-12">
-                                <p className="text-gray-700 text-base sm:text-lg">No bookings yet. Book your first study time above!</p>
+                                <p className="text-gray-700 text-base sm:text-lg">No booking requests yet. Create your first monitoring request above!</p>
                             </div>
                         )}
                     </div>
