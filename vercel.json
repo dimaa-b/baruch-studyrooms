@@ -15,7 +15,7 @@
     { "src": "/api", "dest": "/api/index.py" },
     { "src": "/api/(.*)", "dest": "/api/index.py" },
     { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
+    { "src": "^/(?!api).*", "dest": "/" }
   ],
   "crons": [
     {
