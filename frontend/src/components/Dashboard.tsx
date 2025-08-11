@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { API_BASE_URL } from '../config';
 import Header from './Header';
 
 interface TimeSlot {
@@ -54,7 +55,7 @@ const Dashboard = () => {
     const fetchMonitoringRequests = async () => {
         setIsLoadingBookings(true);
         try {
-            const response = await fetch('http://localhost:5001/api/monitoring/list', {
+            const response = await fetch(`${API_BASE_URL}/api/monitoring/list`, {
                 credentials: 'include', // Include cookies for authentication
             });
             if (response.ok) {
@@ -72,7 +73,7 @@ const Dashboard = () => {
     const fetchAvailability = async (date: string) => {
         setIsLoading(true);
         try {
-            const response = await fetch(`http://localhost:5001/api/availability?date=${date}`);
+            const response = await fetch(`${API_BASE_URL}/api/availability?date=${date}`);
             if (response.ok) {
                 const data = await response.json();
                 setAvailabilityData(data);
@@ -151,7 +152,7 @@ const Dashboard = () => {
     // Stop a monitoring request
     const stopMonitoringRequest = async (requestId: string) => {
         try {
-            const response = await fetch(`http://localhost:5001/api/monitoring/${requestId}/stop`, {
+            const response = await fetch(`${API_BASE_URL}/api/monitoring/${requestId}/stop`, {
                 method: 'POST',
                 credentials: 'include',
             });
@@ -289,7 +290,7 @@ const Dashboard = () => {
 
             console.log('Sending booking request:', bookingData);
 
-            const response = await fetch('http://localhost:5001/api/book', {
+            const response = await fetch(`${API_BASE_URL}/api/book`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

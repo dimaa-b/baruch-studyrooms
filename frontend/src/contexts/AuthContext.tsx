@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { API_BASE_URL } from '../config';
 
 interface User {
   id: string;
@@ -36,7 +37,7 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User | null>(null);

@@ -17,9 +17,15 @@ load_dotenv()
 
 # --- Flask App Setup ---
 app = Flask(__name__)
+# Allow overriding CORS origins for Vercel deployments via env var CORS_ORIGINS (comma-separated)
+_allowed_origins_env = os.environ.get(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://localhost:5000,http://localhost:5001",
+)
+allowed_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
 CORS(
     app,
-    origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"],
+    origins=allowed_origins,
     supports_credentials=True,
     allow_headers=["Content-Type", "Authorization"],
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
