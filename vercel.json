@@ -12,18 +12,11 @@
     }
   ],
   "routes": [
+    { "src": "/api", "dest": "/api/index.py" },
     { "src": "/api/(.*)", "dest": "/api/index.py" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ],
-  "functions": {
-    "api/index.py": {
-      "runtime": "python3.12",
-      "maxDuration": 10,
-      "memory": 1024,
-      "regions": ["iad1"]
-    }
-  },
   "crons": [
     {
       "path": "/api/monitoring/check-all",
