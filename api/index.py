@@ -22,7 +22,7 @@ for p in (PROJECT_ROOT, BACKEND_DIR):
         sys.path.insert(0, p)
 
 # Import the Flask app from backend/main.py
-from main import app as flask_app  # type: ignore  # noqa: E402
+from backend.main import app as flask_app  # type: ignore  # noqa: E402
 
 
 def _with_api_prefix(wsgi_app: Callable) -> Callable:
