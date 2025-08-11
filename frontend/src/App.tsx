@@ -7,7 +7,7 @@ import LandingPage from './components/LandingPage'
 import Dashboard from './components/Dashboard'
 
 function App() {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
 
   if (isLoading) {

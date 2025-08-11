@@ -3,10 +3,9 @@ import { useAuth } from '../contexts/AuthContext';
 
 interface RegisterFormProps {
   onSwitchToLogin: () => void;
-  onClose: () => void;
 }
 
-const RegisterForm = ({ onSwitchToLogin, onClose }: RegisterFormProps) => {
+const RegisterForm = ({ onSwitchToLogin }: RegisterFormProps) => {
   const { register } = useAuth();
   const [formData, setFormData] = useState({
     email: '',

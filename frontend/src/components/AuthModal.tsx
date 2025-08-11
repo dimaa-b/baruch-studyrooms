@@ -48,7 +48,6 @@ const AuthModal = ({ isOpen, onClose, initialMode = 'login' }: AuthModalProps) =
           ) : (
             <RegisterForm 
               onSwitchToLogin={() => setMode('login')}
-              onClose={onClose}
             />
           )}
         </div>
