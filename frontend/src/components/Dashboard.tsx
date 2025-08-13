@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { API_BASE_URL } from '../config';
 import Header from './Header';
@@ -41,6 +41,7 @@ interface MonitoringRequest {
 
 const Dashboard = () => {
     const { user } = useAuth();
+    const bookingFormRef = useRef<HTMLDivElement>(null);
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedTime, setSelectedTime] = useState('09:00');
     const [selectedDuration, setSelectedDuration] = useState('1');
@@ -50,6 +51,7 @@ const Dashboard = () => {
     const [isBooking, setIsBooking] = useState(false);
     const [monitoringRequests, setMonitoringRequests] = useState<MonitoringRequest[]>([]);
     const [isLoadingBookings, setIsLoadingBookings] = useState(false);
+    const [showIndividualRooms, setShowIndividualRooms] = useState(false);
 
     // Fetch monitoring requests from API
     const fetchMonitoringRequests = async () => {
@@ -60,10 +62,15 @@ const Dashboard = () => {
             });
             if (response.ok) {
                 const data = await response.json();
+                console.log('Monitoring requests data:', data);
                 setMonitoringRequests(data.requests || []);
+            } else {
+                console.error('Failed to fetch monitoring requests:', response.status, response.statusText);
+                setMonitoringRequests([]);
             }
         } catch (error) {
             console.error('Error fetching monitoring requests:', error);
+            setMonitoringRequests([]);
         } finally {
             setIsLoadingBookings(false);
         }
@@ -95,6 +102,19 @@ const Dashboard = () => {
         fetchMonitoringRequests();
     }, []);
 
+    // Re-evaluate selected slot when duration changes
+    useEffect(() => {
+        if (selectedSlot) {
+            const timeSlots = getTimeSlots();
+            const selectedSlotIndex = timeSlots.findIndex(slot => slot === selectedSlot.slot.displayTime);
+            
+            if (selectedSlotIndex !== -1) {
+                // Check if the new duration is still valid for the current selection
+                handleSlotClick(selectedSlotIndex, selectedSlot.slot.displayTime);
+            }
+        }
+    }, [selectedDuration, availabilityData]);
+
     // Convert monitoring request to display format
     const formatMonitoringRequestForDisplay = (request: MonitoringRequest) => {
         const startTime = request.start_time;
@@ -113,7 +133,17 @@ const Dashboard = () => {
         };
 
         const displayTime = `${formatTime(startTime)} - ${formatTime(endTime)}`;
-        const duration = request.duration_hours ? `${request.duration_hours} hour${request.duration_hours !== 1 ? 's' : ''}` : 'Unknown';
+        
+        // Calculate duration from start and end times if duration_hours is not available
+        let duration = 'Unknown';
+        if (request.duration_hours) {
+            duration = `${request.duration_hours} hour${request.duration_hours !== 1 ? 's' : ''}`;
+        } else if (startTime && endTime) {
+            const start = new Date(`1970-01-01T${startTime}:00`);
+            const end = new Date(`1970-01-01T${endTime}:00`);
+            const diffHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+            duration = `${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
+        }
         
         let displayStatus: 'confirmed' | 'pending' | 'cancelled';
         let roomName = 'Study Room';
@@ -173,15 +203,38 @@ const Dashboard = () => {
 
     // Handle slot selection for booking - find any available room at the selected time
     const handleSlotClick = (slotIndex: number, _displayTime: string) => {
-        // Find the first available room at this time slot
+        const duration = parseInt(selectedDuration);
         const roomIds = Object.keys(availabilityData);
+        
+        // Find the first room that has the required consecutive slots available
         for (const roomId of roomIds) {
-            const slot = availabilityData[roomId][slotIndex];
-            if (slot && slot.available) {
+            let allSlotsAvailable = true;
+            
+            // Check if all required consecutive slots are available
+            for (let i = 0; i < duration; i++) {
+                const slot = availabilityData[roomId][slotIndex + i];
+                if (!slot || !slot.available) {
+                    allSlotsAvailable = false;
+                    break;
+                }
+            }
+            
+            if (allSlotsAvailable) {
+                const slot = availabilityData[roomId][slotIndex];
                 setSelectedSlot({ roomId, slot });
                 // Convert display time to 24-hour format for the time selector
                 const time24 = convertTo24Hour(slot.displayTime);
                 setSelectedTime(time24);
+                
+                // Scroll to booking form after a short delay to ensure state update
+                setTimeout(() => {
+                    if (bookingFormRef.current) {
+                        bookingFormRef.current.scrollIntoView({ 
+                            behavior: 'smooth', 
+                            block: 'start' 
+                        });
+                    }
+                }, 100);
                 break;
             }
         }
@@ -226,12 +279,35 @@ const Dashboard = () => {
         const slotIndex = timeSlots.findIndex(slot => slot === displayTime);
         
         if (slotIndex !== -1) {
-            // Find the first available room at this time slot
+            const duration = parseInt(selectedDuration);
             const roomIds = Object.keys(availabilityData);
+            
+            // Find the first room that has the required consecutive slots available
             for (const roomId of roomIds) {
-                const slot = availabilityData[roomId][slotIndex];
-                if (slot && slot.available) {
+                let allSlotsAvailable = true;
+                
+                // Check if all required consecutive slots are available
+                for (let i = 0; i < duration; i++) {
+                    const slot = availabilityData[roomId][slotIndex + i];
+                    if (!slot || !slot.available) {
+                        allSlotsAvailable = false;
+                        break;
+                    }
+                }
+                
+                if (allSlotsAvailable) {
+                    const slot = availabilityData[roomId][slotIndex];
                     setSelectedSlot({ roomId, slot });
+                    
+                    // Scroll to booking form after a short delay to ensure state update
+                    setTimeout(() => {
+                        if (bookingFormRef.current) {
+                            bookingFormRef.current.scrollIntoView({ 
+                                behavior: 'smooth', 
+                                block: 'start' 
+                            });
+                        }
+                    }, 100);
                     break;
                 }
             }
@@ -248,19 +324,40 @@ const Dashboard = () => {
         return availabilityData[roomIds[0]]?.map(slot => slot.displayTime) || [];
     };
 
-    // Get consolidated availability - true if ANY room is available at that time
+    // Get consolidated availability - true if ANY room is available at that time for the selected duration
     const getConsolidatedAvailability = () => {
         const timeSlots = getTimeSlots();
+        const duration = parseInt(selectedDuration);
+        
         return timeSlots.map((timeSlot, index) => {
-            const isAvailable = Object.values(availabilityData).some(roomSlots => 
-                roomSlots[index]?.available
-            );
+            // Check if there are enough consecutive slots for the selected duration
+            const isAvailable = Object.values(availabilityData).some(roomSlots => {
+                // Check if this room has all required consecutive slots available
+                for (let i = 0; i < duration; i++) {
+                    const slot = roomSlots[index + i];
+                    if (!slot || !slot.available) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+            
             return {
                 displayTime: timeSlot,
                 available: isAvailable,
                 slotIndex: index
             };
         });
+    };
+
+    // Helper function to check if a slot is part of the current selection
+    const isSlotSelected = (slotIndex: number) => {
+        if (!selectedSlot) return false;
+        
+        const selectedSlotIndex = getTimeSlots().findIndex(slot => slot === selectedSlot.slot.displayTime);
+        const duration = parseInt(selectedDuration);
+        
+        return slotIndex >= selectedSlotIndex && slotIndex < selectedSlotIndex + duration;
     };
 
     const handleBookRoom = async () => {
@@ -358,7 +455,7 @@ const Dashboard = () => {
 
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 lg:gap-8">
                         {/* Booking Form */}
-                        <div className="xl:col-span-1 order-2 xl:order-1"> 
+                        <div ref={bookingFormRef} className="xl:col-span-1 order-2 xl:order-1"> 
                             <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 sm:p-6 border-2 border-black border-opacity-90 xl:sticky xl:top-24">
                                 <h2 className="text-2xl font-bold mb-6 text-black font-royal">Book a Time Slot</h2>
                                 
@@ -434,17 +531,25 @@ const Dashboard = () => {
 
                         {/* Availability Grid */}
                         <div className="xl:col-span-2 order-1 xl:order-2">
-                            <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white font-royal">Time Availability</h2>
+                            <div className="flex justify-between items-center mb-4 sm:mb-6">
+                                <h2 className="text-xl sm:text-2xl font-bold text-white font-royal">Time Availability</h2>
+                                <button
+                                    onClick={() => setShowIndividualRooms(!showIndividualRooms)}
+                                    className="text-xs sm:text-sm px-3 py-1 bg-white bg-opacity-20 hover:bg-opacity-30 rounded-lg text-white transition-colors"
+                                >
+                                    {showIndividualRooms ? 'Hide Individual Rooms' : 'See Individual Rooms'}
+                                </button>
+                            </div>
                             
                             {isLoading ? (
                                 <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-8 border-2 border-black border-opacity-90">
                                     <div className="text-center text-white">Loading availability...</div>
                                 </div>
                             ) : Object.keys(availabilityData).length > 0 ? (
-                                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-2 sm:p-4 border-2 border-black border-opacity-90 overflow-x-auto">
+                                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-2 sm:p-4 border-2 border-black border-opacity-90">
                                     <div className="w-full">
                                         {/* Grid Header */}
-                                        <div className="grid grid-cols-[60px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1 mb-1">
+                                        <div className="grid gap-1 mb-1" style={{ gridTemplateColumns: `80px repeat(${getTimeSlots().length}, minmax(0, 1fr))` }}>
                                             <div className="text-xs font-semibold text-black p-1">Availability</div>
                                             {getTimeSlots().map((time, index) => (
                                                 <div key={index} className="text-xs font-medium text-black p-1 text-center">
@@ -455,7 +560,7 @@ const Dashboard = () => {
                                         </div>
                                         
                                         {/* Consolidated Availability Row */}
-                                        <div className="grid grid-cols-[60px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1">
+                                        <div className="grid gap-1" style={{ gridTemplateColumns: `80px repeat(${getTimeSlots().length}, minmax(0, 1fr))` }}>
                                             <div className="text-xs font-medium text-black p-1 bg-white bg-opacity-20 rounded flex items-center">
                                                 <span className="truncate">Time Slots</span>
                                             </div>
@@ -464,9 +569,9 @@ const Dashboard = () => {
                                                     key={index}
                                                     onClick={() => handleSlotClick(consolidatedSlot.slotIndex, consolidatedSlot.displayTime)}
                                                     disabled={!consolidatedSlot.available}
-                                                    className={`p-0.5 sm:p-1 rounded text-xs font-medium transition-colors min-h-[20px] sm:min-h-[24px] touch-manipulation ${
+                                                    className={`p-1 sm:p-2 rounded text-xs font-medium transition-colors min-h-[28px] sm:min-h-[36px] w-full touch-manipulation ${
                                                         consolidatedSlot.available
-                                                            ? selectedSlot && getTimeSlots()[index] === selectedSlot.slot.displayTime
+                                                            ? isSlotSelected(index)
                                                                 ? 'bg-blue-500 text-white border-2 border-blue-700'
                                                                 : 'bg-green-500 text-white hover:bg-green-600 cursor-pointer active:bg-green-700'
                                                             : 'bg-red-500 text-white cursor-not-allowed opacity-75'
@@ -501,62 +606,65 @@ const Dashboard = () => {
                                             </p>
                                         </div>
                                         
-                                        {/* Separator */}
-                                        <div className="my-6 border-t border-white border-opacity-20"></div>
-                                        
-                                        {/* Individual Room Availability */}
-                                        <div>
-                                            <h3 className="text-lg font-bold mb-4 text-black font-royal">Individual Room Details</h3>
-                                            <div className="space-y-3">
-                                                {Object.entries(availabilityData).map(([roomId, roomSlots]) => (
-                                                    <div key={roomId} className="bg-white bg-opacity-10 rounded-lg p-3">
-                                                        <h4 className="text-base font-bold mb-2 text-black font-royal">
-                                                            Study Room {roomId}
-                                                        </h4>
-                                                        
-                                                        {/* Single row layout matching the top section */}
-                                                        <div className="grid grid-cols-[60px_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1">
-                                                            <div className="text-xs font-medium text-black p-1 bg-white bg-opacity-20 rounded flex items-center">
-                                                                <span className="truncate">Room {roomId}</span>
+                                        {/* Individual Room Availability - Conditionally shown */}
+                                        {showIndividualRooms && (
+                                            <>
+                                                {/* Separator */}
+                                                <div className="my-6 border-t border-white border-opacity-20"></div>
+                                                
+                                                {/* Individual Room Availability */}
+                                                <div>
+                                                    <h3 className="text-lg font-bold mb-4 text-black font-royal">Individual Room Details</h3>
+                                                    <div className="space-y-0.5">
+                                                        {Object.entries(availabilityData).map(([roomId, roomSlots]) => (
+                                                            <div key={roomId} className="bg-white bg-opacity-10 rounded-lg p-3">
+                                                                {/* Room header with room name */}
+                                                                <div className="mb-2">
+                                                                    <h4 className="text-sm font-bold text-black">Study Room {roomId}</h4>
+                                                                </div>
+                                                                
+                                                                {/* Single row layout matching the top section */}
+                                                                <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${roomSlots.length}, minmax(0, 1fr))` }}>
+                                                                    {roomSlots.map((slot, index) => (
+                                                                        <button
+                                                                            key={index}
+                                                                            onClick={() => handleSlotClick(index, slot.displayTime)}
+                                                                            disabled={!slot.available}
+                                                                            className={`p-1 sm:p-2 rounded text-xs font-medium transition-colors min-h-[28px] sm:min-h-[36px] w-full touch-manipulation ${
+                                                                                slot.available
+                                                                                    ? selectedSlot && selectedSlot.roomId === roomId && isSlotSelected(index)
+                                                                                        ? 'bg-blue-500 text-white border-2 border-blue-700'
+                                                                                        : 'bg-green-500 text-white hover:bg-green-600 cursor-pointer active:bg-green-700'
+                                                                                    : 'bg-red-500 text-white cursor-not-allowed opacity-75'
+                                                                            }`}
+                                                                            title={`${slot.displayTime} - ${slot.available ? 'Available' : 'Occupied'}`}
+                                                                        >
+                                                                            <span className="block">{slot.available ? '✓' : '✗'}</span>
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                                
+                                                                {/* Room-specific stats */}
+                                                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                                                    <div className="flex items-center gap-1">
+                                                                        <span className="text-black font-medium">Available:</span>
+                                                                        <span className="text-green-700 font-bold">
+                                                                            {roomSlots.filter(slot => slot.available).length}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1">
+                                                                        <span className="text-black font-medium">Occupied:</span>
+                                                                        <span className="text-red-700 font-bold">
+                                                                            {roomSlots.filter(slot => !slot.available).length}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
                                                             </div>
-                                                            {roomSlots.map((slot, index) => (
-                                                                <button
-                                                                    key={index}
-                                                                    onClick={() => handleSlotClick(index, slot.displayTime)}
-                                                                    disabled={!slot.available}
-                                                                    className={`p-0.5 sm:p-1 rounded text-xs font-medium transition-colors min-h-[20px] sm:min-h-[24px] touch-manipulation ${
-                                                                        slot.available
-                                                                            ? selectedSlot && selectedSlot.roomId === roomId && selectedSlot.slot.displayTime === slot.displayTime
-                                                                                ? 'bg-blue-500 text-white border-2 border-blue-700'
-                                                                                : 'bg-green-500 text-white hover:bg-green-600 cursor-pointer active:bg-green-700'
-                                                                            : 'bg-red-500 text-white cursor-not-allowed opacity-75'
-                                                                    }`}
-                                                                    title={`${slot.displayTime} - ${slot.available ? 'Available' : 'Occupied'}`}
-                                                                >
-                                                                    <span className="block">{slot.available ? '✓' : '✗'}</span>
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                        
-                                                        {/* Room-specific stats */}
-                                                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                                                            <div className="flex items-center gap-1">
-                                                                <span className="text-black font-medium">Available:</span>
-                                                                <span className="text-green-700 font-bold">
-                                                                    {roomSlots.filter(slot => slot.available).length}
-                                                                </span>
-                                                            </div>
-                                                            <div className="flex items-center gap-1">
-                                                                <span className="text-black font-medium">Occupied:</span>
-                                                                <span className="text-red-700 font-bold">
-                                                                    {roomSlots.filter(slot => !slot.available).length}
-                                                                </span>
-                                                            </div>
-                                                        </div>
+                                                        ))}
                                                     </div>
-                                                ))}
-                                            </div>
-                                        </div>
+                                                </div>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
                             ) : (
@@ -635,7 +743,10 @@ const Dashboard = () => {
                         
                         {!isLoadingBookings && monitoringRequests.length === 0 && (
                             <div className="text-center py-8 sm:py-12">
-                                <p className="text-gray-700 text-base sm:text-lg">No booking requests yet. Create your first monitoring request above!</p>
+                                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-6 border-2 border-black border-opacity-90">
+                                    <p className="text-black text-base sm:text-lg mb-2">No booking requests yet</p>
+                                    <p className="text-gray-700 text-sm">Book a time slot above or wait for your monitoring requests to complete!</p>
+                                </div>
                             </div>
                         )}
                     </div>

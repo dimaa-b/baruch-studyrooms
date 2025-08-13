@@ -344,7 +344,7 @@ class MonitoringManager:
         if self.client is None:
             raise Exception("MongoDB connection not available")
     
-    def create_monitoring_request(self, user_id, email, first_name, last_name, target_date, start_time, end_time, room_preference=None):
+    def create_monitoring_request(self, user_id, email, first_name, last_name, target_date, start_time, end_time, duration_hours=None, room_preference=None):
         """Create a new monitoring request"""
         try:
             self._ensure_connection()
@@ -367,6 +367,7 @@ class MonitoringManager:
             "target_date": target_date,
             "start_time": start_time,
             "end_time": end_time,
+            "duration_hours": duration_hours,
             "room_preference": room_preference,
             "status": "active",  # active, completed, stopped, expired, error
             "created_at": datetime.utcnow(),
