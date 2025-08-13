@@ -7,4 +7,14 @@ export default defineConfig(({ command }) => ({
   // so URLs like /frontend/assets/* match the deployed paths on Vercel
   base: command === 'build' ? '/frontend/' : '/',
   plugins: [react()],
+  // Proxy API calls during development
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5001',
+        changeOrigin: true,
+        secure: false,
+      },
+    },
+  },
 }))
