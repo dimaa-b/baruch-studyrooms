@@ -201,6 +201,53 @@ const Dashboard = () => {
         }
     };
 
+
+
+    // Create a monitoring request
+    const createMonitoringRequest = async () => {
+        if (!user) {
+            return;
+        }
+
+        setIsBooking(true);
+        
+        try {
+            // Prepare monitoring data
+            const monitoringData = {
+                date: selectedDate,
+                startTime: selectedTime + ':00', // Convert HH:MM to HH:MM:SS format
+                duration: parseInt(selectedDuration),
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email
+            };
+
+            console.log('Creating monitoring request:', monitoringData);
+
+            const response = await fetch(`${API_BASE_URL}/api/monitoring/create`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',
+                body: JSON.stringify(monitoringData)
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                // Refresh monitoring requests to see the new one
+                fetchMonitoringRequests();
+            } else {
+                console.error('Failed to create monitoring request:', result.message || result.error);
+            }
+        } catch (error) {
+            console.error('Error creating monitoring request:', error);
+        } finally {
+            setIsBooking(false);
+        }
+    };
+
     // Handle slot selection for booking - find any available room at the selected time
     const handleSlotClick = (slotIndex: number, _displayTime: string) => {
         const duration = parseInt(selectedDuration);
@@ -330,6 +377,17 @@ const Dashboard = () => {
         const duration = parseInt(selectedDuration);
         
         return timeSlots.map((timeSlot, index) => {
+            // Check if there are enough remaining slots for the selected duration
+            const remainingSlots = timeSlots.length - index;
+            if (remainingSlots < duration) {
+                // Not enough slots remaining for this duration
+                return {
+                    displayTime: timeSlot,
+                    available: false,
+                    slotIndex: index
+                };
+            }
+            
             // Check if there are enough consecutive slots for the selected duration
             const isAvailable = Object.values(availabilityData).some(roomSlots => {
                 // Check if this room has all required consecutive slots available
@@ -362,63 +420,19 @@ const Dashboard = () => {
 
     const handleBookRoom = async () => {
         if (!selectedSlot) {
-            alert('Please select a time slot from the availability grid first!');
             return;
         }
 
         // Check if user info is available (either from auth or form inputs would be needed)
         if (!user) {
-            alert('Please log in to book a time slot, or ensure your user information is available.');
             return;
         }
 
-        setIsBooking(true);
+        // Directly create monitoring request
+        await createMonitoringRequest();
         
-        try {
-            // Prepare booking data
-            const bookingData = {
-                date: selectedDate,
-                startTime: selectedSlot.slot.start,
-                duration: parseInt(selectedDuration),
-                firstName: user.firstName,
-                lastName: user.lastName,
-                email: user.email
-            };
-
-            console.log('Sending booking request:', bookingData);
-
-            const response = await fetch(`${API_BASE_URL}/api/book`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                credentials: 'include', // Include cookies for authentication
-                body: JSON.stringify(bookingData)
-            });
-
-            const result = await response.json();
-
-            if (response.ok && result.success) {
-                // Success - show detailed information
-                const booking = result.booking;
-                alert(`🎉 Booking Successful!\n\n${result.message}\n\nDetails:\n• Time: ${booking.display_time}\n• Date: ${selectedDate}\n• Booking ID: ${booking.booking_id}`);
-                
-                // Clear the selected slot
-                setSelectedSlot(null);
-                // Refresh availability data
-                fetchAvailability(selectedDate);
-                // Refresh monitoring requests to see any updates
-                fetchMonitoringRequests();
-            } else {
-                // Error from server
-                alert(`❌ Booking Failed\n\n${result.message || result.error || 'Unknown error occurred'}`);
-            }
-        } catch (error) {
-            console.error('Error booking time slot:', error);
-            alert('❌ Network Error\n\nAn error occurred while booking the time slot. Please check your connection and try again.');
-        } finally {
-            setIsBooking(false);
-        }
+        // Clear the selected slot after creating monitoring request
+        setSelectedSlot(null);
     };
 
     return (
@@ -461,30 +475,23 @@ const Dashboard = () => {
                                 
                                 <div className="space-y-4">
                                     <div>
-                                        <label className="block text-sm font-medium mb-2 text-black">Date</label>
-                                        <input
-                                            type="date"
-                                            value={selectedDate}
-                                            onChange={(e) => setSelectedDate(e.target.value)}
-                                            className="w-full px-4 py-2 rounded-lg bg-white bg-opacity-20 border border-white border-opacity-30 text-black placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50"
-                                        />
-                                    </div>
-                                    
-                                    <div>
                                         <label className="block text-sm font-medium mb-2 text-black">Time</label>
                                         <select
                                             value={selectedTime}
                                             onChange={(e) => handleTimeChange(e.target.value)}
                                             className="w-full px-4 py-2 rounded-lg bg-white bg-opacity-20 border border-white border-opacity-30 text-black focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50"
                                         >
-                                            {/* should be linked to the available times */}
-                                            <option value="11:00">11:00 AM</option>
-                                            <option value="12:00">12:00 PM</option>
-                                            <option value="13:00">1:00 PM</option>
-                                            <option value="14:00">2:00 PM</option>
-                                            <option value="15:00">3:00 PM</option>
-                                            <option value="16:00">4:00 PM</option>
-                                            <option value="17:00">5:00 PM</option>
+                                            {getTimeSlots().map((displayTime, index) => {
+                                                const time24 = convertTo24Hour(displayTime);
+                                                return (
+                                                    <option key={index} value={time24}>
+                                                        {displayTime}
+                                                    </option>
+                                                );
+                                            })}
+                                            {getTimeSlots().length === 0 && (
+                                                <option value="">No times available</option>
+                                            )}
                                         </select>
                                     </div>
                                     
@@ -500,20 +507,24 @@ const Dashboard = () => {
                                         </select>
                                     </div>
                                     
-                                    <button
-                                        onClick={handleBookRoom}
-                                        disabled={!selectedSlot || isBooking}
-                                        className={`w-full py-3 px-4 rounded-lg font-semibold transition-colors ${
-                                            selectedSlot && !isBooking
-                                                ? 'bg-blue-400 text-white hover:bg-blue-500 border-2 border-black'
-                                                : 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                                        }`}
-                                    >
-                                        {isBooking 
-                                            ? 'Booking...' 
-                                            : 'Select a Time Slot'
-                                        }
-                                    </button>
+                                    <div className="space-y-2">
+                                        <button
+                                            onClick={handleBookRoom}
+                                            disabled={!selectedSlot || isBooking}
+                                            className={`w-full py-3 px-4 rounded-lg font-semibold transition-colors ${
+                                                selectedSlot && !isBooking
+                                                    ? 'bg-blue-400 text-white hover:bg-blue-500 border-2 border-black'
+                                                    : 'bg-gray-500 text-gray-300 cursor-not-allowed'
+                                            }`}
+                                        >
+                                            {isBooking 
+                                                ? 'Booking...' 
+                                                : selectedSlot 
+                                                ? 'Book'
+                                                : 'Select a Time Slot'
+                                            }
+                                        </button>
+                                    </div>
                                     
                                     {selectedSlot && (
                                         <div className="p-3 bg-blue-400 bg-opacity-20 rounded-lg border border-blue-500">
@@ -521,7 +532,45 @@ const Dashboard = () => {
                                                 Selected Time Slot
                                             </p>
                                             <p className="text-black text-sm">
-                                                {selectedSlot.slot.displayTime} ({selectedDuration} hour{selectedDuration !== '1' ? 's' : ''})
+                                                {(() => {
+                                                    const startTime = selectedSlot.slot.displayTime;
+                                                    const duration = parseInt(selectedDuration);
+                                                    
+                                                    // Calculate end time
+                                                    const match = startTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+                                                    if (!match) return startTime;
+                                                    
+                                                    let [, hours, minutes, period] = match;
+                                                    let hour24 = parseInt(hours);
+                                                    
+                                                    // Convert to 24-hour format
+                                                    if (period.toUpperCase() === 'PM' && hour24 !== 12) {
+                                                        hour24 += 12;
+                                                    } else if (period.toUpperCase() === 'AM' && hour24 === 12) {
+                                                        hour24 = 0;
+                                                    }
+                                                    
+                                                    // Add duration hours
+                                                    const endHour24 = hour24 + duration;
+                                                    
+                                                    // Convert back to 12-hour format for end time
+                                                    let endHour12 = endHour24;
+                                                    let endPeriod = 'AM';
+                                                    
+                                                    if (endHour24 >= 12) {
+                                                        endPeriod = 'PM';
+                                                        if (endHour24 > 12) {
+                                                            endHour12 = endHour24 - 12;
+                                                        }
+                                                    }
+                                                    if (endHour24 === 0) {
+                                                        endHour12 = 12;
+                                                    }
+                                                    
+                                                    const endTime = `${endHour12}:${minutes} ${endPeriod}`;
+                                                    
+                                                    return `${startTime} - ${endTime}`;
+                                                })()}
                                             </p>
                                         </div>
                                     )}
@@ -531,14 +580,32 @@ const Dashboard = () => {
 
                         {/* Availability Grid */}
                         <div className="xl:col-span-2 order-1 xl:order-2">
-                            <div className="flex justify-between items-center mb-4 sm:mb-6">
-                                <h2 className="text-xl sm:text-2xl font-bold text-white font-royal">Time Availability</h2>
-                                <button
-                                    onClick={() => setShowIndividualRooms(!showIndividualRooms)}
-                                    className="text-xs sm:text-sm px-3 py-1 bg-white bg-opacity-20 hover:bg-opacity-30 rounded-lg text-white transition-colors"
-                                >
-                                    {showIndividualRooms ? 'Hide Individual Rooms' : 'See Individual Rooms'}
-                                </button>
+                            <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white font-royal">Time Availability</h2>
+                            
+                            {/* Date Selection */}
+                            <div className="mb-4 sm:mb-6">
+                                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-3 sm:p-4 border-2 border-black border-opacity-90">
+                                    <label className="block text-sm font-medium mb-2 text-black">Select Date</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="date"
+                                            value={selectedDate}
+                                            onChange={(e) => setSelectedDate(e.target.value)}
+                                            className="flex-1 px-4 py-2 rounded-lg bg-white bg-opacity-20 border border-white border-opacity-30 text-black focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50"
+                                            min={new Date().toISOString().split('T')[0]}
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                const tomorrow = new Date();
+                                                tomorrow.setDate(tomorrow.getDate() + 1);
+                                                setSelectedDate(tomorrow.toISOString().split('T')[0]);
+                                            }}
+                                            className="px-4 py-2 rounded-lg bg-blue-400 hover:bg-blue-500 text-white font-medium text-sm transition-colors border-2 border-black whitespace-nowrap"
+                                        >
+                                            Tomorrow
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                             
                             {isLoading ? (
@@ -571,7 +638,7 @@ const Dashboard = () => {
                                                     disabled={!consolidatedSlot.available}
                                                     className={`p-1 sm:p-2 rounded text-xs font-medium transition-colors min-h-[28px] sm:min-h-[36px] w-full touch-manipulation ${
                                                         consolidatedSlot.available
-                                                            ? isSlotSelected(index)
+                                                            ? isSlotSelected(consolidatedSlot.slotIndex)
                                                                 ? 'bg-blue-500 text-white border-2 border-blue-700'
                                                                 : 'bg-green-500 text-white hover:bg-green-600 cursor-pointer active:bg-green-700'
                                                             : 'bg-red-500 text-white cursor-not-allowed opacity-75'
@@ -599,11 +666,31 @@ const Dashboard = () => {
                                             </div>
                                         </div>
                                         
-                                        {/* Mobile Instructions */}
+                                        {/* Mobile Instructions and Individual Rooms Toggle */}
                                         <div className="mt-2 sm:hidden">
-                                            <p className="text-xs text-gray-700 text-center">
+                                            <p className="text-xs text-gray-700 text-center mb-2">
                                                 Tap time slots to select them
                                             </p>
+                                            <div className="flex justify-center">
+                                                <button
+                                                    onClick={() => setShowIndividualRooms(!showIndividualRooms)}
+                                                    className="text-xs px-3 py-1 bg-white bg-opacity-20 hover:bg-opacity-30 rounded-lg text-black transition-colors"
+                                                >
+                                                    {showIndividualRooms ? 'Hide Individual Rooms' : 'See Individual Rooms'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Desktop Individual Rooms Toggle */}
+                                        <div className="mt-2 hidden sm:block">
+                                            <div className="flex justify-center">
+                                                <button
+                                                    onClick={() => setShowIndividualRooms(!showIndividualRooms)}
+                                                    className="text-xs sm:text-sm px-3 py-1 bg-white bg-opacity-20 hover:bg-opacity-30 rounded-lg text-black transition-colors"
+                                                >
+                                                    {showIndividualRooms ? 'Hide Individual Rooms' : 'See Individual Rooms'}
+                                                </button>
+                                            </div>
                                         </div>
                                         
                                         {/* Individual Room Availability - Conditionally shown */}
@@ -680,72 +767,191 @@ const Dashboard = () => {
 
                     {/* My Bookings Section */}
                     <div className="mt-8 sm:mt-12">
-                        <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-white font-royal">My Booking Requests</h2>
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6">
+                            <div>
+                                <h2 className="text-xl sm:text-2xl font-bold text-white font-royal">My Bookings</h2>
+                            </div>
+
+                        </div>
                         
                         {isLoadingBookings ? (
                             <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-8 border-2 border-black border-opacity-90">
-                                <div className="text-center text-black">Loading your requests...</div>
+                                <div className="flex items-center justify-center space-x-3">
+                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-black"></div>
+                                    <span className="text-black">Loading your bookings...</span>
+                                </div>
+                            </div>
+                        ) : getAllBookings().length > 0 ? (
+                            <div className="space-y-4">
+                                {/* Status Filter Tabs */}
+                                {(() => {
+                                    const allBookings = getAllBookings();
+                                    const confirmedCount = allBookings.filter(b => b.status === 'confirmed').length;
+                                    const pendingCount = allBookings.filter(b => b.status === 'pending').length;
+                                    const cancelledCount = allBookings.filter(b => b.status === 'cancelled').length;
+                                    
+                                    return (
+                                        <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 border-2 border-black border-opacity-90">
+                                            <div className="grid grid-cols-3 gap-2 sm:gap-4">
+                                                <div className="text-center p-3 bg-white bg-opacity-20 rounded-lg border-2 border-black border-opacity-90">
+                                                    <div className="text-lg sm:text-xl font-black text-black font-royal">{confirmedCount}</div>
+                                                    <div className="text-xs sm:text-sm text-black font-bold">Confirmed</div>
+                                                </div>
+                                                <div className="text-center p-3 bg-white bg-opacity-20 rounded-lg border-2 border-black border-opacity-90">
+                                                    <div className="text-lg sm:text-xl font-black text-black font-royal">{pendingCount}</div>
+                                                    <div className="text-xs sm:text-sm text-black font-bold">Monitoring</div>
+                                                </div>
+                                                <div className="text-center p-3 bg-white bg-opacity-20 rounded-lg border-2 border-black border-opacity-90">
+                                                    <div className="text-lg sm:text-xl font-black text-black font-royal">{cancelledCount}</div>
+                                                    <div className="text-xs sm:text-sm text-black font-bold">Cancelled</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                                
+                                {/* Bookings List */}
+                                <div className="space-y-4">
+                                    {getAllBookings().map((booking) => (
+                                        <div
+                                            key={booking.id}
+                                            className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl border-2 border-black border-opacity-90 overflow-hidden transition-all hover:bg-opacity-15"
+                                        >
+                                            {/* Status Header */}
+                                            <div className={`px-4 py-3 border-b-2 border-black border-opacity-90 ${
+                                                booking.status === 'confirmed' ? 'bg-green-100 bg-opacity-60' :
+                                                booking.status === 'pending' ? 'bg-blue-100 bg-opacity-60' : 
+                                                'bg-gray-100 bg-opacity-60'
+                                            }`}>
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center space-x-2">
+                                                        <span className="text-black font-bold text-sm sm:text-base font-royal">
+                                                            {booking.status === 'confirmed' ? 'Booking Confirmed' : 
+                                                             booking.status === 'pending' ? 'Actively Monitoring' : 
+                                                             'Request Cancelled'}
+                                                        </span>
+                                                    </div>
+                                                    {booking.status === 'pending' && (
+                                                        <div className="flex items-center space-x-1 text-black text-xs font-medium">
+                                                            <div className="animate-pulse w-2 h-2 bg-blue-600 rounded-full"></div>
+                                                            <span>Live</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Main Content */}
+                                            <div className="p-4 sm:p-6">
+                                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                                                    {/* Booking Details */}
+                                                    <div className="lg:col-span-2 space-y-3">
+                                                        <div>
+                                                            <h3 className="text-lg sm:text-xl font-bold text-black font-royal mb-1">
+                                                                {booking.roomName}
+                                                            </h3>                                            {booking.status === 'pending' && (
+                                                <p className="text-sm text-gray-700">Watching for availability</p>
+                                            )}
+                                                        </div>
+                                                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            <div>
+                                                <div className="text-sm text-gray-700 mb-1">Date</div>
+                                                <div className="font-medium text-black">
+                                                    {(() => {
+                                                        const date = new Date(booking.date);
+                                                        return date.toLocaleDateString('en-US', {
+                                                            weekday: 'long',
+                                                            year: 'numeric',
+                                                            month: 'long',
+                                                            day: 'numeric'
+                                                        });
+                                                    })()}
+                                                </div>
+                                            </div>
+                                            
+                                            <div>
+                                                <div className="text-sm text-gray-700 mb-1">Time</div>
+                                                <div className="font-medium text-black">{booking.time}</div>
+                                            </div>
+                                            
+                                            <div className="sm:col-span-2">
+                                                <div className="text-sm text-gray-700 mb-1">Duration</div>
+                                                <div className="font-medium text-black">{booking.duration}</div>
+                                            </div>
+                                        </div>
+                                                                         {/* Additional Info */}
+                                        {booking.monitoringRequest?.success_details?.booking_id && (
+                                            <div className="bg-green-50 bg-opacity-80 border-2 border-green-200 border-opacity-90 rounded-lg p-3">
+                                                <div className="flex items-center space-x-2">
+                                                    <div>
+                                                        <div className="text-sm text-green-800 font-medium">Booking Confirmation</div>
+                                                        <div className="text-sm text-green-900 font-bold">ID: {booking.monitoringRequest.success_details.booking_id}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {booking.monitoringRequest?.error_message && (
+                                            <div className="bg-red-50 bg-opacity-80 border-2 border-red-200 border-opacity-90 rounded-lg p-3">
+                                                <div className="flex items-center space-x-2">
+                                                    <div>
+                                                        <div className="text-sm text-red-800 font-medium">Error Details</div>
+                                                        <div className="text-sm text-red-900 font-bold">{booking.monitoringRequest.error_message}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                                    </div>
+                                                    
+                                                    {/* Actions */}
+                                                    <div className="flex flex-col justify-center space-y-2">
+                                                        {booking.status === 'pending' && (
+                                                            <button 
+                                                                onClick={() => stopMonitoringRequest(booking.id)}
+                                                                className="w-full py-3 px-4 rounded-lg font-semibold text-sm bg-red-500 hover:bg-red-600 transition-colors text-white border-2 border-black flex items-center justify-center space-x-2"
+                                                            >
+                                                                <span>Stop Monitoring</span>
+                                                            </button>
+                                                        )}
+                                                        
+                                                        {booking.status === 'confirmed' && (
+                                                            <>
+                                                                <button className="w-full py-3 px-4 rounded-lg font-semibold text-sm bg-blue-400 hover:bg-blue-500 transition-colors text-white border-2 border-black flex items-center justify-center space-x-2">
+                                                                    <span>View Details</span>
+                                                                </button>
+                                                                <button className="w-full py-2 px-4 rounded-lg font-medium text-sm bg-white bg-opacity-20 hover:bg-opacity-30 transition-colors text-black border-2 border-black border-opacity-90 flex items-center justify-center space-x-2">
+                                                                    <span>Email Reminder</span>
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                        
+                                                        {booking.status === 'cancelled' && (
+                                                            <button className="w-full py-3 px-4 rounded-lg font-semibold text-sm bg-gray-500 text-white cursor-not-allowed opacity-75 flex items-center justify-center space-x-2 border-2 border-black">
+                                                                <span>Request Ended</span>
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         ) : (
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                                {getAllBookings().map((booking) => (
-                                    <div
-                                        key={booking.id}
-                                        className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-4 sm:p-6 border-2 border-black border-opacity-90"
-                                    >
-                                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-4 gap-3">
-                                            <div className="flex-1">
-                                                <h3 className="text-base sm:text-lg font-bold mb-2 text-black font-royal">{booking.roomName}</h3>
-                                                <p className="text-sm text-gray-700 font-medium">{booking.date}</p>
-                                                <p className="text-sm text-gray-700 font-medium">🕐 {booking.time} • {booking.duration}</p>
-                                                {booking.monitoringRequest && booking.monitoringRequest.check_count !== undefined && (
-                                                    <p className="text-xs text-gray-600 mt-1">Checked {booking.monitoringRequest.check_count} times</p>
-                                                )}
-                                                {booking.monitoringRequest?.success_details?.booking_id && (
-                                                    <p className="text-xs text-green-700 mt-1">Booking ID: {booking.monitoringRequest.success_details.booking_id}</p>
-                                                )}
-                                                {booking.monitoringRequest?.error_message && (
-                                                    <p className="text-xs text-red-700 mt-1">Error: {booking.monitoringRequest.error_message}</p>
-                                                )}
-                                            </div>
-                                            <span className={`px-3 py-1 rounded-full text-xs sm:text-sm font-medium self-start ${
-                                                booking.status === 'confirmed'
-                                                    ? 'bg-green-500 text-white'
-                                                    : booking.status === 'pending'
-                                                    ? 'bg-yellow-500 text-white'
-                                                    : 'bg-red-500 text-white'
-                                            }`}>
-                                                {booking.status === 'confirmed' ? 'Booked' : 
-                                                 booking.status === 'pending' ? 'Monitoring' : 
-                                                 booking.monitoringRequest?.status || 'Cancelled'}
-                                            </span>
+                            <div className="text-center py-12">
+                                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-8 border-2 border-black border-opacity-90">
+                                    <div className="mb-4">
+                                        <div className="w-20 h-20 mx-auto mb-4 bg-white bg-opacity-20 rounded-full flex items-center justify-center">
+                                            <span className="text-3xl font-bold text-black">B</span>
                                         </div>
-                                        
-                                        <div className="flex flex-col sm:flex-row gap-2">
-                                            {booking.status === 'pending' && (
-                                                <button 
-                                                    onClick={() => stopMonitoringRequest(booking.id)}
-                                                    className="flex-1 py-2 px-4 rounded-lg font-semibold text-sm bg-red-500 hover:bg-red-600 transition-colors text-white"
-                                                >
-                                                    Stop Monitoring
-                                                </button>
-                                            )}
-                                            {booking.status === 'confirmed' && (
-                                                <button className="flex-1 py-2 px-4 rounded-lg font-semibold text-sm bg-white bg-opacity-20 hover:bg-opacity-30 transition-colors">
-                                                    View Details
-                                                </button>
-                                            )}
+                                        <h3 className="text-xl font-bold text-black mb-2 font-royal">No Bookings Yet</h3>
+                                        <p className="text-gray-700 text-base mb-6">
+                                            You haven't made any bookings or monitoring requests yet.
+                                        </p>
+                                        <div className="space-y-2 text-sm text-gray-600">
+                                            <p><strong>Tip:</strong> Use the booking form above to reserve a time slot</p>
+                                            <p><strong>Smart Monitoring:</strong> We'll automatically book when slots become available</p>
                                         </div>
                                     </div>
-                                ))}
-                            </div>
-                        )}
-                        
-                        {!isLoadingBookings && monitoringRequests.length === 0 && (
-                            <div className="text-center py-8 sm:py-12">
-                                <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-6 border-2 border-black border-opacity-90">
-                                    <p className="text-black text-base sm:text-lg mb-2">No booking requests yet</p>
-                                    <p className="text-gray-700 text-sm">Book a time slot above or wait for your monitoring requests to complete!</p>
                                 </div>
                             </div>
                         )}

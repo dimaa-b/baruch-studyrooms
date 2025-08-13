@@ -715,7 +715,11 @@ def create_monitoring_request():
 
     # Calculate end time from start time and duration
     start_time = data["startTime"]
-    if len(start_time) > 5:  # If it's a full datetime string
+    
+    # Handle different time formats
+    if len(start_time) == 8 and start_time.count(':') == 2:  # HH:MM:SS format
+        start_time = start_time[:5]  # Convert to HH:MM
+    elif len(start_time) > 8:  # If it's a full datetime string
         start_time = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").strftime(
             "%H:%M"
         )
@@ -1579,14 +1583,24 @@ def handler(event, context):
         return handle_request(app, event, context)
     except ImportError:
         return {
-            "statusCode": 500,
-            "body": json.dumps(
-                {
-                    "error": "serverless-wsgi not installed. Run: pip install serverless-wsgi"
-                }
-            ),
+            'statusCode': 500,
+            'body': 'serverless-wsgi not installed. Install with: pip install serverless-wsgi'
         }
 
+@app.route("/api/monitoring/test-check", methods=["POST"])
+def test_monitoring_check():
+    """
+    Manually trigger a monitoring check for testing purposes.
+    This is useful for testing the monitoring system without waiting for the scheduler.
+    """
+    try:
+        # Call the same function that the scheduler would call
+        return check_all_monitoring_requests()
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Error during test check: {str(e)}"
+        }), 500
 
 if __name__ == "__main__":
     app.run(debug=True, port=5001)
