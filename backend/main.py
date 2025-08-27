@@ -756,15 +756,6 @@ def create_monitoring_request():
         return jsonify(result), 500
 
 
-@app.route("/api/monitoring/<request_id>", methods=["GET"])
-def get_monitoring_request(request_id):
-    """Get details of a specific monitoring request"""
-    request_doc = monitoring_manager.get_monitoring_request(request_id)
-
-    if not request_doc:
-        return jsonify({"error": "Monitoring request not found"}), 404
-
-    return jsonify(request_doc)
 
 
 @app.route("/api/monitoring/<request_id>/check-and-book", methods=["POST"])
