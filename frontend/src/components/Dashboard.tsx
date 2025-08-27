@@ -419,19 +419,11 @@ const Dashboard = () => {
     };
 
     const handleBookRoom = async () => {
-        if (!selectedSlot) {
-            return;
-        }
-
-        // Check if user info is available (either from auth or form inputs would be needed)
+        // Allow booking even if no slot is selected
         if (!user) {
             return;
         }
-
-        // Directly create monitoring request
         await createMonitoringRequest();
-        
-        // Clear the selected slot after creating monitoring request
         setSelectedSlot(null);
     };
 
@@ -510,18 +502,16 @@ const Dashboard = () => {
                                     <div className="space-y-2">
                                         <button
                                             onClick={handleBookRoom}
-                                            disabled={!selectedSlot || isBooking}
+                                            disabled={isBooking}
                                             className={`w-full py-3 px-4 rounded-lg font-semibold transition-colors ${
-                                                selectedSlot && !isBooking
+                                                !isBooking
                                                     ? 'bg-blue-400 text-white hover:bg-blue-500 border-2 border-black'
                                                     : 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                             }`}
                                         >
                                             {isBooking 
                                                 ? 'Booking...' 
-                                                : selectedSlot 
-                                                ? 'Book'
-                                                : 'Select a Time Slot'
+                                                : 'Book'
                                             }
                                         </button>
                                     </div>

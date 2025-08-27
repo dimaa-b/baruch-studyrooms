@@ -21,7 +21,7 @@
   "crons": [
     {
       "path": "/api/monitoring/check-all",
-      "schedule": "*/10 * * * *"
+      "schedule": "* * * * *"
     }
   ]
 }
