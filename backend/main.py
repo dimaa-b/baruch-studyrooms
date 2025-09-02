@@ -1169,7 +1169,7 @@ def get_active_monitoring_requests():
     return jsonify({"requests": requests})
 
 
-@app.route("/api/monitoring/check-all", methods=["POST"])
+@app.route("/api/monitoring/check-all", methods=["GET"])
 def check_all_monitoring_requests():
     """
     Check all active monitoring requests and attempt bookings.
