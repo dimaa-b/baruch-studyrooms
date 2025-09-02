@@ -7,7 +7,7 @@ import json
 import re
 from datetime import datetime, time
 from typing import Dict, Any
-from auth import AuthManager, MonitoringManager, require_auth, optional_auth
+from .auth import AuthManager, MonitoringManager, require_auth, optional_auth
 import os
 from dotenv import load_dotenv
 from datetime import timedelta
@@ -55,23 +55,16 @@ def determine_slot_availability(slot):
     """
     Determine if a slot is available for booking.
 
-    A slot is considered unavailable if:
-    1. It has a className field (usually indicates booked/unavailable status)
-    2. The className contains certain keywords that indicate unavailability
+    All slots with essential fields are considered bookable, regardless of className.
+    This allows users to attempt booking even on blocked/unavailable time slots.
 
     Args:
         slot (dict): The slot object from the external API
 
     Returns:
-        bool: True if available, False if unavailable
+        bool: True if slot has essential booking fields, False otherwise
     """
-    # Check if slot has className field
-    if "className" in slot:
-        class_name = slot["className"].lower()
-        return False
-
-    # If no className or no unavailable keywords found, slot is available
-    # Also check that essential fields exist
+    # Check that essential fields exist for booking attempts
     return all(field in slot for field in ["checksum", "itemId", "start", "end"])
 
 
