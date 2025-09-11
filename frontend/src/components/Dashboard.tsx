@@ -625,15 +625,16 @@ const Dashboard = () => {
                                                 <button
                                                     key={index}
                                                     onClick={() => handleSlotClick(consolidatedSlot.slotIndex, consolidatedSlot.displayTime)}
-                                                    disabled={!consolidatedSlot.available}
-                                                    className={`p-1 sm:p-2 rounded text-xs font-medium transition-colors min-h-[28px] sm:min-h-[36px] w-full touch-manipulation ${
+                                                    className={`p-1 sm:p-2 rounded text-xs font-medium transition-colors min-h-[28px] sm:min-h-[36px] w-full touch-manipulation cursor-pointer ${
                                                         consolidatedSlot.available
                                                             ? isSlotSelected(consolidatedSlot.slotIndex)
                                                                 ? 'bg-blue-500 text-white border-2 border-blue-700'
-                                                                : 'bg-green-500 text-white hover:bg-green-600 cursor-pointer active:bg-green-700'
-                                                            : 'bg-red-500 text-white cursor-not-allowed opacity-75'
+                                                                : 'bg-green-500 text-white hover:bg-green-600 active:bg-green-700'
+                                                            : isSlotSelected(consolidatedSlot.slotIndex)
+                                                                ? 'bg-blue-500 text-white border-2 border-blue-700'
+                                                                : 'bg-red-500 text-white hover:bg-red-600 active:bg-red-700'
                                                     }`}
-                                                    title={`${consolidatedSlot.displayTime} - ${consolidatedSlot.available ? 'Available' : 'No availability'}`}
+                                                    title={`${consolidatedSlot.displayTime} - ${consolidatedSlot.available ? 'Available' : 'Booked (still clickable)'}`}
                                                 >
                                                     <span className="block">{consolidatedSlot.available ? '✓' : '✗'}</span>
                                                 </button>
@@ -648,7 +649,7 @@ const Dashboard = () => {
                                             </div>
                                             <div className="flex items-center gap-1">
                                                 <div className="w-3 h-3 sm:w-4 sm:h-4 bg-red-500 rounded"></div>
-                                                <span className="text-black">Occupied</span>
+                                                <span className="text-black">Booked (still clickable)</span>
                                             </div>
                                             <div className="flex items-center gap-1">
                                                 <div className="w-3 h-3 sm:w-4 sm:h-4 bg-blue-500 border-2 border-blue-700 rounded"></div>
@@ -706,15 +707,16 @@ const Dashboard = () => {
                                                                         <button
                                                                             key={index}
                                                                             onClick={() => handleSlotClick(index, slot.displayTime)}
-                                                                            disabled={!slot.available}
-                                                                            className={`p-1 sm:p-2 rounded text-xs font-medium transition-colors min-h-[28px] sm:min-h-[36px] w-full touch-manipulation ${
+                                                                            className={`p-1 sm:p-2 rounded text-xs font-medium transition-colors min-h-[28px] sm:min-h-[36px] w-full touch-manipulation cursor-pointer ${
                                                                                 slot.available
                                                                                     ? selectedSlot && selectedSlot.roomId === roomId && isSlotSelected(index)
                                                                                         ? 'bg-blue-500 text-white border-2 border-blue-700'
-                                                                                        : 'bg-green-500 text-white hover:bg-green-600 cursor-pointer active:bg-green-700'
-                                                                                    : 'bg-red-500 text-white cursor-not-allowed opacity-75'
+                                                                                        : 'bg-green-500 text-white hover:bg-green-600 active:bg-green-700'
+                                                                                    : selectedSlot && selectedSlot.roomId === roomId && isSlotSelected(index)
+                                                                                        ? 'bg-blue-500 text-white border-2 border-blue-700'
+                                                                                        : 'bg-red-500 text-white hover:bg-red-600 active:bg-red-700'
                                                                             }`}
-                                                                            title={`${slot.displayTime} - ${slot.available ? 'Available' : 'Occupied'}`}
+                                                                            title={`${slot.displayTime} - ${slot.available ? 'Available' : 'Booked (still clickable)'}`}
                                                                         >
                                                                             <span className="block">{slot.available ? '✓' : '✗'}</span>
                                                                         </button>

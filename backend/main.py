@@ -55,17 +55,22 @@ def determine_slot_availability(slot):
     """
     Determine if a slot is available for booking.
 
-    All slots with essential fields are considered bookable, regardless of className.
-    This allows users to attempt booking even on blocked/unavailable time slots.
+    Slots with a className property are considered unavailable for booking.
+    Only slots with essential fields AND no className are considered bookable.
 
     Args:
         slot (dict): The slot object from the external API
 
     Returns:
-        bool: True if slot has essential booking fields, False otherwise
+        bool: True if slot is available for booking, False otherwise
     """
     # Check that essential fields exist for booking attempts
-    return all(field in slot for field in ["checksum", "itemId", "start", "end"])
+    has_essential_fields = all(field in slot for field in ["checksum", "itemId", "start", "end"])
+    
+    # Slots with className are considered unavailable (e.g., "s-lc-eq-pending")
+    has_no_class_name = "className" not in slot or not slot["className"]
+    
+    return has_essential_fields and has_no_class_name
 
 
 def find_consecutive_slots(slots_by_room, start_time, duration_hours, date_str):
@@ -1301,7 +1306,7 @@ def check_all_monitoring_requests():
                 add_response_data = add_res.json()
                 print(f"Add first slot to cart response: {add_response_data}")
             except RequestsJSONDecodeError:
-                error_msg = "Invalid response from booking system for first slot."
+                error_msg = f"Invalid response from booking system for first slot. Response: {add_res.text[:500]}"
                 monitoring_manager.update_monitoring_status(
                     request_id, "error", error_message=error_msg
                 )
@@ -1316,7 +1321,7 @@ def check_all_monitoring_requests():
                 continue
 
             if "bookings" not in add_response_data or not add_response_data["bookings"]:
-                error_msg = "No bookings returned for first slot."
+                error_msg = f"No bookings returned for first slot. Response: {add_response_data}"
                 monitoring_manager.update_monitoring_status(
                     request_id, "error", error_message=error_msg
                 )
