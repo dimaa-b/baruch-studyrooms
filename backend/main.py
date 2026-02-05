@@ -193,10 +193,6 @@ def get_room_availability(target_date_str):
         for slot in response.json().get("slots", []):
             room_id = slot["itemId"]
             
-            # Skip rooms with invalid room numbers (6+ digit IDs are internal, not real rooms)
-            if not is_valid_room_number(room_id):
-                continue
-            
             if room_id not in slots_by_room:
                 slots_by_room[room_id] = []
 
