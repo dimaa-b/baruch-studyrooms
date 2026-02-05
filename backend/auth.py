@@ -46,14 +46,18 @@ class AuthManager:
             
             print("MongoDB connection established successfully")
         except Exception as e:
+            self.client = None
+            self.db = None
+            self.users = None
+            self.sessions = None
             print(f"Warning: MongoDB connection failed: {e}")
             print("Authentication features will be disabled")
     
     def _ensure_connection(self):
         """Ensure MongoDB connection is available"""
-        if self.client is None:
+        if self.client is None or self.db is None or self.users is None or self.sessions is None:
             self._initialize_connection()
-        if self.client is None:
+        if self.client is None or self.db is None or self.users is None or self.sessions is None:
             raise Exception("MongoDB connection not available")
     
     def validate_email(self, email):

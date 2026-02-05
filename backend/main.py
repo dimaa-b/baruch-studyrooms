@@ -192,6 +192,11 @@ def get_room_availability(target_date_str):
         slots_by_room = {}
         for slot in response.json().get("slots", []):
             room_id = slot["itemId"]
+            
+            # Skip rooms with invalid room numbers (6+ digit IDs are internal, not real rooms)
+            if not is_valid_room_number(room_id):
+                continue
+            
             if room_id not in slots_by_room:
                 slots_by_room[room_id] = []
 
@@ -204,7 +209,15 @@ def get_room_availability(target_date_str):
 
             slots_by_room[room_id].append(slot)
 
-        return slots_by_room
+        # Filter out rooms that are fully available (all slots open = likely a data issue)
+        filtered_slots_by_room = {}
+        for room_id, slots in slots_by_room.items():
+            available_count = sum(1 for s in slots if s.get("available", False))
+            # If all slots are available, this room is likely not actually bookable
+            if available_count < len(slots):
+                filtered_slots_by_room[room_id] = slots
+        
+        return filtered_slots_by_room
 
     except requests.exceptions.RequestException as e:
         return {"error": str(e)}
