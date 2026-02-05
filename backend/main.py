@@ -286,7 +286,7 @@ def login():
         response.set_cookie(
             "session_token",
             result["token"],
-            max_age=7 * 24 * 60 * 60,
+            max_age=36500 * 24 * 60 * 60,  # Never expire (100 years)
             httponly=True,
             secure=False,
             samesite="Lax",

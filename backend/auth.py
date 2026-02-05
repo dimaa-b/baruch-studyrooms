@@ -162,7 +162,7 @@ class AuthManager:
         
         # Create session
         session_token = self.generate_session_token()
-        expires_at = datetime.utcnow() + timedelta(days=7)  # 7 day session
+        expires_at = datetime.utcnow() + timedelta(days=36500)  # Never expire (100 years)
         
         session_doc = {
             "token": session_token,
@@ -217,8 +217,7 @@ class AuthManager:
             return None
         
         session = self.sessions.find_one({
-            "token": session_token,
-            "expires_at": {"$gt": datetime.utcnow()}
+            "token": session_token
         })
         
         if not session:
@@ -248,9 +247,9 @@ class AuthManager:
         """Refresh session expiration"""
         try:
             self._ensure_connection()
-            new_expires_at = datetime.utcnow() + timedelta(days=7)
+            new_expires_at = datetime.utcnow() + timedelta(days=36500)  # Never expire (100 years)
             result = self.sessions.update_one(
-                {"token": session_token, "expires_at": {"$gt": datetime.utcnow()}},
+                {"token": session_token},
                 {"$set": {"expires_at": new_expires_at, "last_activity": datetime.utcnow()}}
             )
             
