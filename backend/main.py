@@ -53,9 +53,10 @@ USER_STATUS_ANSWER = "Current student at Baruch or CUNY SPS"
 # --- Helper Functions ---
 def is_valid_room_number(room_id):
     """
-    Check if a room ID represents a valid room number.
-    Valid room numbers are typically 3-4 digits (e.g., 447, 1234).
-    Invalid room IDs are 6+ digits (e.g., 197755).
+    Check if a room identifier is a valid positive numeric ID.
+
+    The live Baruch API currently returns 6-digit numeric IDs (e.g., 142254),
+    so filtering to 3-4 digit room numbers prevents all bookings.
     
     Args:
         room_id: The room ID to validate (can be int or string)
@@ -65,9 +66,7 @@ def is_valid_room_number(room_id):
     """
     try:
         room_num = int(room_id)
-        # Valid room numbers are between 100 and 9999 (3-4 digits)
-        # Anything with 5+ digits is likely an internal ID, not a room number
-        return 100 <= room_num <= 9999
+        return room_num > 0
     except (ValueError, TypeError):
         return False
 
@@ -123,7 +122,7 @@ def normalize_start_time(start_time_raw):
 def find_consecutive_slots(slots_by_room, start_time, duration_hours, date_str):
     """
     Find consecutive available slots for the requested time duration.
-    Only considers rooms with valid room numbers (3-4 digits).
+    Only considers rooms with valid positive numeric IDs.
 
     Args:
         slots_by_room (dict): Dictionary of room_id -> list of slots
@@ -144,7 +143,7 @@ def find_consecutive_slots(slots_by_room, start_time, duration_hours, date_str):
 
     # Search through all rooms for consecutive slots
     for room_id, slots in slots_by_room.items():
-        # Skip rooms with invalid room numbers (e.g., 197755)
+        # Skip rooms with non-numeric/invalid IDs
         if not is_valid_room_number(room_id):
             continue
             
