@@ -94,6 +94,32 @@ def determine_slot_availability(slot):
     return has_essential_fields and has_no_class_name
 
 
+def normalize_start_time(start_time_raw):
+    """
+    Normalize client-provided start times to HH:MM.
+
+    Accepts:
+    - HH:MM
+    - HH:MM:SS
+    - YYYY-MM-DD HH:MM:SS
+    """
+    if not isinstance(start_time_raw, str) or not start_time_raw.strip():
+        raise ValueError("Invalid startTime format. Expected HH:MM or HH:MM:SS.")
+
+    start_time = start_time_raw.strip()
+
+    if re.match(r"^\d{2}:\d{2}$", start_time):
+        return start_time
+
+    if re.match(r"^\d{2}:\d{2}:\d{2}$", start_time):
+        return start_time[:5]
+
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", start_time):
+        return datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
+
+    raise ValueError("Invalid startTime format. Expected HH:MM or HH:MM:SS.")
+
+
 def find_consecutive_slots(slots_by_room, start_time, duration_hours, date_str):
     """
     Find consecutive available slots for the requested time duration.
@@ -443,13 +469,10 @@ def book_room():
         )
 
     # Calculate end time from start time and duration
-    start_time = data["startTime"]
-
-    # Extract just the time part if full datetime strings are provided
-    if len(start_time) > 5:  # If it's a full datetime string
-        start_time = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").strftime(
-            "%H:%M"
-        )
+    try:
+        start_time = normalize_start_time(data["startTime"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     # Calculate end time
     start_dt = datetime.strptime(f"{data['date']} {start_time}", "%Y-%m-%d %H:%M")
@@ -747,15 +770,10 @@ def create_monitoring_request():
         return jsonify({"error": "Duration must be a positive integer (hours)"}), 400
 
     # Calculate end time from start time and duration
-    start_time = data["startTime"]
-    
-    # Handle different time formats
-    if len(start_time) == 8 and start_time.count(':') == 2:  # HH:MM:SS format
-        start_time = start_time[:5]  # Convert to HH:MM
-    elif len(start_time) > 8:  # If it's a full datetime string
-        start_time = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").strftime(
-            "%H:%M"
-        )
+    try:
+        start_time = normalize_start_time(data["startTime"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     start_dt = datetime.strptime(f"{data['date']} {start_time}", "%Y-%m-%d %H:%M")
     end_dt = start_dt + timedelta(hours=duration_hours)
