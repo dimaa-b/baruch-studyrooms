@@ -311,6 +311,34 @@ def get_update_checksum_for_target_end(first_booking: Dict[str, Any], target_end
     return None
 
 
+def enrich_monitoring_request_room_labels(request_doc: Dict[str, Any]):
+    """Populate room preference labels from internal IDs when labels are missing."""
+    if not isinstance(request_doc, dict):
+        return request_doc
+
+    existing_labels = request_doc.get("room_preference_labels")
+    if isinstance(existing_labels, list) and len(existing_labels) > 0:
+        return request_doc
+
+    room_preferences = get_request_room_preferences(request_doc)
+    if not room_preferences:
+        request_doc["room_preference_labels"] = []
+        return request_doc
+
+    try:
+        catalog = get_room_catalog()
+        id_to_room = catalog.get("id_to_room", {})
+        request_doc["room_preference_labels"] = [
+            id_to_room[room_id]["display_name"]
+            for room_id in room_preferences
+            if room_id in id_to_room
+        ]
+    except Exception:
+        request_doc["room_preference_labels"] = []
+
+    return request_doc
+
+
 def find_consecutive_slots(
     slots_by_room, start_time, duration_hours, date_str, preferred_room_ids=None
 ):
@@ -1514,10 +1542,12 @@ def list_monitoring_requests():
         requests = monitoring_manager.get_user_monitoring_requests(
             request.current_user["id"]
         )
+        requests = [enrich_monitoring_request_room_labels(req) for req in requests]
         return jsonify({"requests": requests})
     else:
         # For unauthenticated requests, return active requests without user details
         requests = monitoring_manager.get_active_monitoring_requests()
+        requests = [enrich_monitoring_request_room_labels(req) for req in requests]
         # Remove sensitive user information
         sanitized_requests = []
         for req in requests:
@@ -1529,6 +1559,8 @@ def list_monitoring_requests():
                 "status": req["status"],
                 "created_at": req["created_at"],
                 "check_count": req.get("check_count", 0),
+                "room_preferences": get_request_room_preferences(req),
+                "room_preference_labels": req.get("room_preference_labels", []),
             }
             sanitized_requests.append(sanitized_req)
         return jsonify({"requests": sanitized_requests})
@@ -1538,6 +1570,7 @@ def list_monitoring_requests():
 def get_active_monitoring_requests():
     """Get all active monitoring requests (for external schedulers)"""
     requests = monitoring_manager.get_active_monitoring_requests()
+    requests = [enrich_monitoring_request_room_labels(req) for req in requests]
     return jsonify({"requests": requests})
 
 
@@ -1944,6 +1977,94 @@ def check_all_monitoring_requests():
             "checked": checked_count,
             "booked": booked_count,
             "results": results,
+        }
+    )
+
+
+@app.route("/api/monitoring/check-all-boost", methods=["GET"])
+def check_all_monitoring_requests_boost():
+    """
+    Run multiple monitoring checks within one invocation.
+
+    This endpoint is designed for minute-level cron triggers and executes a
+    short burst of repeated checks to approximate sub-minute cadence.
+    """
+    try:
+        interval_seconds = int(request.args.get("intervalSeconds", 10))
+        duration_seconds = int(request.args.get("durationSeconds", 55))
+    except (ValueError, TypeError):
+        return jsonify({"error": "intervalSeconds and durationSeconds must be integers"}), 400
+
+    # Guardrails to avoid abusive/accidental long-running invocations.
+    interval_seconds = max(5, min(interval_seconds, 10))
+    duration_seconds = max(10, min(duration_seconds, 55))
+
+    started_at = time_module.time()
+    iterations = 0
+    successes = 0
+    failures = 0
+    cycle_summaries = []
+
+    while True:
+        elapsed = time_module.time() - started_at
+        if elapsed >= duration_seconds:
+            break
+
+        iterations += 1
+
+        try:
+            response = check_all_monitoring_requests()
+            status_code = 200
+
+            if isinstance(response, tuple):
+                flask_response = response[0]
+                status_code = int(response[1]) if len(response) > 1 else 200
+            else:
+                flask_response = response
+
+            cycle_payload = flask_response.get_json(silent=True) if flask_response else None
+            cycle_summaries.append(
+                {
+                    "iteration": iterations,
+                    "status": status_code,
+                    "checked": (cycle_payload or {}).get("checked", 0),
+                    "booked": (cycle_payload or {}).get("booked", 0),
+                    "message": (cycle_payload or {}).get("message", ""),
+                }
+            )
+
+            if status_code < 400:
+                successes += 1
+            else:
+                failures += 1
+        except Exception as e:
+            failures += 1
+            cycle_summaries.append(
+                {
+                    "iteration": iterations,
+                    "status": 500,
+                    "checked": 0,
+                    "booked": 0,
+                    "message": f"Boost iteration error: {str(e)}",
+                }
+            )
+
+        # Sleep only if another cycle can still fit in the configured duration.
+        if (time_module.time() - started_at) + interval_seconds >= duration_seconds:
+            break
+
+        time_module.sleep(interval_seconds)
+
+    return jsonify(
+        {
+            "success": failures == 0,
+            "mode": "boost",
+            "interval_seconds": interval_seconds,
+            "duration_seconds": duration_seconds,
+            "iterations": iterations,
+            "successful_iterations": successes,
+            "failed_iterations": failures,
+            "cycles": cycle_summaries,
         }
     )
 
