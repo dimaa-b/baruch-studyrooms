@@ -30,6 +30,8 @@ interface MonitoringRequest {
   last_name?: string;
   email?: string;
   room_preference?: string;
+    room_preferences?: string[];
+    room_preference_labels?: string[];
   success_details?: {
     slots: any[];
     booking_id: string;
@@ -37,6 +39,13 @@ interface MonitoringRequest {
     slot_count: number;
   };
   error_message?: string;
+}
+
+interface RoomCatalogEntry {
+    internal_id: string;
+    room_number: string | null;
+    display_name: string;
+    capacity: number;
 }
 
 const Dashboard = () => {
@@ -47,6 +56,8 @@ const Dashboard = () => {
     const [selectedDuration, setSelectedDuration] = useState('1');
     const [availabilityData, setAvailabilityData] = useState<AvailabilityData>({});
     const [selectedSlot, setSelectedSlot] = useState<{roomId: string, slot: TimeSlot} | null>(null);
+    const [roomCatalog, setRoomCatalog] = useState<RoomCatalogEntry[]>([]);
+    const [selectedRoomPreferences, setSelectedRoomPreferences] = useState<string[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isBooking, setIsBooking] = useState(false);
     const [monitoringRequests, setMonitoringRequests] = useState<MonitoringRequest[]>([]);
@@ -84,11 +95,31 @@ const Dashboard = () => {
             if (response.ok) {
                 const data = await response.json();
                 setAvailabilityData(data);
+                const availableRoomIds = new Set(Object.keys(data));
+                const filteredPreferences = selectedRoomPreferences.filter((roomId) => availableRoomIds.has(roomId));
+                if (filteredPreferences.length !== selectedRoomPreferences.length) {
+                    setSelectedRoomPreferences(filteredPreferences);
+                    setSelectedSlot(null);
+                }
             }
         } catch (error) {
             console.error('Error fetching availability:', error);
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const fetchRoomCatalog = async () => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/rooms`);
+            if (!response.ok) {
+                return;
+            }
+
+            const data = await response.json();
+            setRoomCatalog(data.rooms || []);
+        } catch (error) {
+            console.error('Error fetching room catalog:', error);
         }
     };
 
@@ -100,6 +131,7 @@ const Dashboard = () => {
     // Fetch monitoring requests when component mounts
     useEffect(() => {
         fetchMonitoringRequests();
+        fetchRoomCatalog();
     }, []);
 
     // Re-evaluate selected slot when duration changes
@@ -114,6 +146,28 @@ const Dashboard = () => {
             }
         }
     }, [selectedDuration, availabilityData]);
+
+    const getRoomDisplayLabel = (roomId: string) => {
+        const room = roomCatalog.find((entry) => entry.internal_id === roomId);
+        if (room) {
+            return room.display_name;
+        }
+
+        return `Room ID ${roomId}`;
+    };
+
+    const getRoomPreferenceSummary = (request: MonitoringRequest) => {
+        if (request.room_preference_labels && request.room_preference_labels.length > 0) {
+            return request.room_preference_labels.join(', ');
+        }
+
+        const preferredIds = request.room_preferences || (request.room_preference ? [request.room_preference] : []);
+        if (preferredIds.length === 0) {
+            return 'Any available room';
+        }
+
+        return preferredIds.map((roomId) => getRoomDisplayLabel(roomId)).join(', ');
+    };
 
     // Convert monitoring request to display format
     const formatMonitoringRequestForDisplay = (request: MonitoringRequest) => {
@@ -152,12 +206,12 @@ const Dashboard = () => {
             displayStatus = 'confirmed';
             // Extract room info if available
             if (request.success_details.slots && request.success_details.slots.length > 0) {
-                const roomId = request.success_details.slots[0].itemId;
-                roomName = `Study Room ${roomId}`;
+                const roomId = String(request.success_details.slots[0].itemId);
+                roomName = getRoomDisplayLabel(roomId);
             }
         } else if (request.status === 'active') {
             displayStatus = 'pending';
-            roomName = `Monitoring for Room ${request.room_preference || 'Any'}`;
+            roomName = `Monitoring for ${getRoomPreferenceSummary(request)}`;
         } else {
             displayStatus = 'cancelled';
             roomName = `Request ${request.status}`;
@@ -219,7 +273,11 @@ const Dashboard = () => {
                 duration: parseInt(selectedDuration),
                 firstName: user.firstName,
                 lastName: user.lastName,
-                email: user.email
+                email: user.email,
+                roomPreferences: selectedRoomPreferences,
+                roomNumbers: selectedRoomPreferences
+                    .map((roomId) => roomCatalog.find((room) => room.internal_id === roomId)?.room_number)
+                    .filter((value): value is string => Boolean(value)),
             };
 
             console.log('Creating monitoring request:', monitoringData);
@@ -249,12 +307,21 @@ const Dashboard = () => {
     };
 
     // Handle slot selection for booking - find any available room at the selected time
-    const handleSlotClick = (slotIndex: number, _displayTime: string) => {
+    const handleSlotClick = (slotIndex: number, _displayTime: string, preferredRoomId?: string) => {
         const duration = parseInt(selectedDuration);
         const roomIds = Object.keys(availabilityData);
+        const roomCandidates = preferredRoomId
+            ? [preferredRoomId]
+            : selectedRoomPreferences.length > 0
+                ? selectedRoomPreferences
+                : roomIds;
         
         // Find the first room that has the required consecutive slots available
-        for (const roomId of roomIds) {
+        for (const roomId of roomCandidates) {
+            if (!availabilityData[roomId]) {
+                continue;
+            }
+
             let allSlotsAvailable = true;
             
             // Check if all required consecutive slots are available
@@ -269,6 +336,9 @@ const Dashboard = () => {
             if (allSlotsAvailable) {
                 const slot = availabilityData[roomId][slotIndex];
                 setSelectedSlot({ roomId, slot });
+                if (selectedRoomPreferences.length === 0 || !selectedRoomPreferences.includes(roomId)) {
+                    setSelectedRoomPreferences([roomId]);
+                }
                 // Convert display time to 24-hour format for the time selector
                 const time24 = convertTo24Hour(slot.displayTime);
                 setSelectedTime(time24);
@@ -328,9 +398,14 @@ const Dashboard = () => {
         if (slotIndex !== -1) {
             const duration = parseInt(selectedDuration);
             const roomIds = Object.keys(availabilityData);
+            const roomCandidates = selectedRoomPreferences.length > 0 ? selectedRoomPreferences : roomIds;
             
             // Find the first room that has the required consecutive slots available
-            for (const roomId of roomIds) {
+            for (const roomId of roomCandidates) {
+                if (!availabilityData[roomId]) {
+                    continue;
+                }
+
                 let allSlotsAvailable = true;
                 
                 // Check if all required consecutive slots are available
@@ -375,6 +450,9 @@ const Dashboard = () => {
     const getConsolidatedAvailability = () => {
         const timeSlots = getTimeSlots();
         const duration = parseInt(selectedDuration);
+        const roomIds = selectedRoomPreferences.length > 0
+            ? selectedRoomPreferences
+            : Object.keys(availabilityData);
         
         return timeSlots.map((timeSlot, index) => {
             // Check if there are enough remaining slots for the selected duration
@@ -389,7 +467,12 @@ const Dashboard = () => {
             }
             
             // Check if there are enough consecutive slots for the selected duration
-            const isAvailable = Object.values(availabilityData).some(roomSlots => {
+            const isAvailable = roomIds.some((roomId) => {
+                const roomSlots = availabilityData[roomId];
+                if (!roomSlots) {
+                    return false;
+                }
+
                 // Check if this room has all required consecutive slots available
                 for (let i = 0; i < duration; i++) {
                     const slot = roomSlots[index + i];
@@ -467,9 +550,51 @@ const Dashboard = () => {
                                 
                                 <div className="space-y-4">
                                     <div>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <label className="block text-sm font-medium text-black">Preferred Rooms</label>
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedRoomPreferences([])}
+                                                className="text-xs px-2 py-1 rounded bg-white bg-opacity-20 hover:bg-opacity-30 text-black"
+                                            >
+                                                Any Room
+                                            </button>
+                                        </div>
+                                        <select
+                                            multiple
+                                            value={selectedRoomPreferences}
+                                            aria-label="Select preferred rooms"
+                                            title="Select preferred rooms"
+                                            onChange={(e) => {
+                                                const selectedIds = Array.from(e.target.selectedOptions).map((option) => option.value);
+                                                setSelectedRoomPreferences(selectedIds);
+                                                if (selectedSlot && selectedIds.length > 0 && !selectedIds.includes(selectedSlot.roomId)) {
+                                                    setSelectedSlot(null);
+                                                }
+                                            }}
+                                            className="w-full px-4 py-2 rounded-lg bg-white bg-opacity-20 border border-white border-opacity-30 text-black focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50 min-h-[120px]"
+                                        >
+                                            {roomCatalog
+                                                .filter((room) => availabilityData[room.internal_id])
+                                                .map((room) => (
+                                                    <option key={room.internal_id} value={room.internal_id}>
+                                                        {room.display_name}
+                                                    </option>
+                                                ))}
+                                        </select>
+                                        <p className="text-xs text-gray-700 mt-2">
+                                            {selectedRoomPreferences.length > 0
+                                                ? `Selected: ${selectedRoomPreferences.map((roomId) => getRoomDisplayLabel(roomId)).join(', ')}`
+                                                : 'No room selected: any available room can be used.'}
+                                        </p>
+                                    </div>
+
+                                    <div>
                                         <label className="block text-sm font-medium mb-2 text-black">Time</label>
                                         <select
                                             value={selectedTime}
+                                            aria-label="Select booking start time"
+                                            title="Select booking start time"
                                             onChange={(e) => handleTimeChange(e.target.value)}
                                             className="w-full px-4 py-2 rounded-lg bg-white bg-opacity-20 border border-white border-opacity-30 text-black focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50"
                                         >
@@ -491,6 +616,8 @@ const Dashboard = () => {
                                         <label className="block text-sm font-medium mb-2 text-black">Duration</label>
                                         <select
                                             value={selectedDuration}
+                                            aria-label="Select booking duration"
+                                            title="Select booking duration"
                                             onChange={(e) => setSelectedDuration(e.target.value)}
                                             className="w-full px-4 py-2 rounded-lg bg-white bg-opacity-20 border border-white border-opacity-30 text-black focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50"
                                         >
@@ -520,6 +647,9 @@ const Dashboard = () => {
                                         <div className="p-3 bg-blue-400 bg-opacity-20 rounded-lg border border-blue-500">
                                             <p className="text-black text-sm font-medium">
                                                 Selected Time Slot
+                                            </p>
+                                            <p className="text-black text-sm font-semibold">
+                                                {getRoomDisplayLabel(selectedSlot.roomId)}
                                             </p>
                                             <p className="text-black text-sm">
                                                 {(() => {
@@ -580,6 +710,8 @@ const Dashboard = () => {
                                         <input
                                             type="date"
                                             value={selectedDate}
+                                            aria-label="Select booking date"
+                                            title="Select booking date"
                                             onChange={(e) => setSelectedDate(e.target.value)}
                                             className="flex-1 px-4 py-2 rounded-lg bg-white bg-opacity-20 border border-white border-opacity-30 text-black focus:outline-none focus:ring-2 focus:ring-white focus:ring-opacity-50"
                                             min={new Date().toISOString().split('T')[0]}
@@ -698,7 +830,7 @@ const Dashboard = () => {
                                                             <div key={roomId} className="bg-white bg-opacity-10 rounded-lg p-3">
                                                                 {/* Room header with room name */}
                                                                 <div className="mb-2">
-                                                                    <h4 className="text-sm font-bold text-black">Study Room {roomId}</h4>
+                                                                    <h4 className="text-sm font-bold text-black">{getRoomDisplayLabel(roomId)}</h4>
                                                                 </div>
                                                                 
                                                                 {/* Single row layout matching the top section */}
@@ -706,7 +838,7 @@ const Dashboard = () => {
                                                                     {roomSlots.map((slot, index) => (
                                                                         <button
                                                                             key={index}
-                                                                            onClick={() => handleSlotClick(index, slot.displayTime)}
+                                                                            onClick={() => handleSlotClick(index, slot.displayTime, roomId)}
                                                                             className={`p-1 sm:p-2 rounded text-xs font-medium transition-colors min-h-[28px] sm:min-h-[36px] w-full touch-manipulation cursor-pointer ${
                                                                                 slot.available
                                                                                     ? selectedSlot && selectedSlot.roomId === roomId && isSlotSelected(index)

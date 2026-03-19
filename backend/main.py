@@ -5,8 +5,9 @@ import requests
 from requests.exceptions import JSONDecodeError as RequestsJSONDecodeError
 import json
 import re
+import time as time_module
 from datetime import datetime, time
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from .auth import AuthManager, MonitoringManager, require_auth, optional_auth
 import os
 from dotenv import load_dotenv
@@ -48,6 +49,11 @@ BASE_URL = "https://libraryrooms.baruch.cuny.edu"
 LID = 16857
 GID = 35704
 USER_STATUS_ANSWER = "Current student at Baruch or CUNY SPS"
+ROOM_CATALOG_CACHE_TTL_SECONDS = 60 * 15
+_room_catalog_cache: Dict[str, Any] = {
+    "updated_at": 0,
+    "catalog": None,
+}
 
 
 # --- Helper Functions ---
@@ -119,7 +125,195 @@ def normalize_start_time(start_time_raw):
     raise ValueError("Invalid startTime format. Expected HH:MM or HH:MM:SS.")
 
 
-def find_consecutive_slots(slots_by_room, start_time, duration_hours, date_str):
+def _decode_js_escaped_string(value: str) -> str:
+    """Decode JS-escaped strings embedded in HTML script blocks."""
+    try:
+        return bytes(value, "utf-8").decode("unicode_escape")
+    except Exception:
+        return value
+
+
+def get_room_catalog(force_refresh: bool = False):
+    """
+    Fetch room metadata from the public spaces page.
+
+    This provides a deterministic mapping between user-facing room numbers and
+    internal equipment IDs (eid/itemId) used by booking APIs.
+    """
+    now = int(time_module.time())
+    cached_catalog = _room_catalog_cache.get("catalog")
+    cache_age = now - int(_room_catalog_cache.get("updated_at", 0))
+
+    if (
+        not force_refresh
+        and cached_catalog is not None
+        and cache_age < ROOM_CATALOG_CACHE_TTL_SECONDS
+    ):
+        return cached_catalog
+
+    session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+            "Origin": BASE_URL,
+            "Referer": f"{BASE_URL}/spaces?lid={LID}&gid={GID}",
+        }
+    )
+
+    response = session.get(f"{BASE_URL}/spaces?lid={LID}&gid={GID}", timeout=30)
+    response.raise_for_status()
+    html_body = response.text
+
+    resource_pattern = re.compile(
+        r'resources\.push\(\{\s*id:\s*"eid_(\d+)".*?title:\s*"([^"]+)".*?capacity:\s*(\d+)',
+        re.DOTALL,
+    )
+
+    id_to_room: Dict[str, Dict[str, Any]] = {}
+    room_number_to_ids: Dict[str, List[str]] = {}
+
+    for match in resource_pattern.finditer(html_body):
+        internal_id = match.group(1)
+        title_raw = match.group(2)
+        capacity = int(match.group(3))
+        display_name = _decode_js_escaped_string(title_raw)
+
+        room_number_match = re.search(r"Room\s+(\d+)", display_name, re.IGNORECASE)
+        room_number = room_number_match.group(1) if room_number_match else None
+
+        room_entry = {
+            "internal_id": internal_id,
+            "room_number": room_number,
+            "display_name": display_name,
+            "capacity": capacity,
+        }
+        id_to_room[internal_id] = room_entry
+
+        if room_number:
+            room_number_to_ids.setdefault(room_number, []).append(internal_id)
+
+    catalog = {
+        "rooms": sorted(
+            id_to_room.values(),
+            key=lambda room: (
+                int(room["room_number"]) if room["room_number"] and room["room_number"].isdigit() else 999999,
+                room["display_name"],
+            ),
+        ),
+        "id_to_room": id_to_room,
+        "room_number_to_ids": room_number_to_ids,
+        "fetched_at": datetime.utcnow().isoformat(),
+    }
+
+    _room_catalog_cache["updated_at"] = now
+    _room_catalog_cache["catalog"] = catalog
+    return catalog
+
+
+def normalize_room_preferences(payload: Dict[str, Any], room_catalog: Dict[str, Any]):
+    """Resolve requested room inputs (room number or internal ID) to internal IDs."""
+    requested_values: List[str] = []
+
+    room_preferences = payload.get("roomPreferences")
+    if isinstance(room_preferences, list):
+        requested_values.extend(str(value).strip() for value in room_preferences if str(value).strip())
+
+    room_preference = payload.get("roomPreference")
+    if room_preference is not None and str(room_preference).strip():
+        requested_values.append(str(room_preference).strip())
+
+    room_numbers = payload.get("roomNumbers")
+    if isinstance(room_numbers, list):
+        requested_values.extend(str(value).strip() for value in room_numbers if str(value).strip())
+
+    if not requested_values:
+        return {
+            "resolved_room_ids": [],
+            "resolved_labels": [],
+            "invalid_inputs": [],
+        }
+
+    id_to_room = room_catalog.get("id_to_room", {})
+    room_number_to_ids = room_catalog.get("room_number_to_ids", {})
+
+    resolved_room_ids: List[str] = []
+    invalid_inputs: List[str] = []
+
+    for raw_value in requested_values:
+        if raw_value in id_to_room:
+            resolved_room_ids.append(raw_value)
+            continue
+
+        if raw_value in room_number_to_ids:
+            resolved_room_ids.extend(room_number_to_ids[raw_value])
+            continue
+
+        invalid_inputs.append(raw_value)
+
+    # Keep order stable and remove duplicates.
+    deduped_room_ids = list(dict.fromkeys(resolved_room_ids))
+    resolved_labels = [
+        id_to_room[room_id]["display_name"]
+        for room_id in deduped_room_ids
+        if room_id in id_to_room
+    ]
+
+    return {
+        "resolved_room_ids": deduped_room_ids,
+        "resolved_labels": resolved_labels,
+        "invalid_inputs": invalid_inputs,
+    }
+
+
+def get_request_room_preferences(request_doc: Dict[str, Any]):
+    """Normalize room preference storage format for old and new monitoring docs."""
+    room_preferences = request_doc.get("room_preferences")
+    if isinstance(room_preferences, list):
+        return [str(room_id) for room_id in room_preferences if str(room_id).strip()]
+
+    room_preference = request_doc.get("room_preference")
+    if room_preference is None:
+        return []
+
+    room_preference_value = str(room_preference).strip()
+    return [room_preference_value] if room_preference_value else []
+
+
+def get_update_checksum_for_target_end(first_booking: Dict[str, Any], target_end: str):
+    """
+    Select update checksum by matching the target end time to provided booking options.
+
+    This avoids guessing checksum indices when optionChecksums cardinality varies.
+    """
+    options = first_booking.get("options") or []
+    option_checksums = first_booking.get("optionChecksums") or []
+
+    if not options or not option_checksums:
+        return None
+
+    target_no_seconds = target_end[:16]
+
+    for index, option in enumerate(options):
+        if index >= len(option_checksums):
+            continue
+
+        if isinstance(option, dict):
+            end_candidate = str(option.get("end") or option.get("value") or option.get("time") or "")
+        else:
+            end_candidate = str(option)
+
+        if not end_candidate:
+            continue
+
+        if target_end in end_candidate or target_no_seconds in end_candidate:
+            return option_checksums[index]
+
+    return None
+
+
+def find_consecutive_slots(
+    slots_by_room, start_time, duration_hours, date_str, preferred_room_ids=None
+):
     """
     Find consecutive available slots for the requested time duration.
     Only considers rooms with valid positive numeric IDs.
@@ -129,6 +323,8 @@ def find_consecutive_slots(slots_by_room, start_time, duration_hours, date_str):
         start_time (str): Start time in HH:MM format
         duration_hours (int): Duration in hours
         date_str (str): Date in YYYY-MM-DD format
+
+        preferred_room_ids (list|None): Optional ordered room IDs to restrict search to
 
     Returns:
         list: List of consecutive slots, or empty list if none found
@@ -141,8 +337,34 @@ def find_consecutive_slots(slots_by_room, start_time, duration_hours, date_str):
     if duration_hours <= 0:
         return []
 
-    # Search through all rooms for consecutive slots
-    for room_id, slots in slots_by_room.items():
+    rooms_to_check = list(slots_by_room.items())
+    if preferred_room_ids:
+        normalized_ids = preferred_room_ids
+        if not isinstance(preferred_room_ids, list):
+            normalized_ids = [preferred_room_ids]
+
+        filtered_rooms = []
+        for preferred_room_id in normalized_ids:
+            preferred_room_key = str(preferred_room_id)
+            preferred_slots = slots_by_room.get(preferred_room_key)
+
+            # Fallback for integer-key dictionaries (if any)
+            if preferred_slots is None:
+                try:
+                    preferred_slots = slots_by_room.get(int(preferred_room_id))
+                except (TypeError, ValueError):
+                    preferred_slots = None
+
+            if preferred_slots is not None:
+                filtered_rooms.append((preferred_room_key, preferred_slots))
+
+        if not filtered_rooms:
+            return []
+
+        rooms_to_check = filtered_rooms
+
+    # Search through candidate rooms for consecutive slots
+    for room_id, slots in rooms_to_check:
         # Skip rooms with non-numeric/invalid IDs
         if not is_valid_room_number(room_id):
             continue
@@ -409,11 +631,32 @@ def get_availability():
     return jsonify(response)
 
 
+@app.route("/api/rooms", methods=["GET"])
+def get_rooms_catalog():
+    """Return room metadata mapping between internal IDs and display room numbers."""
+    try:
+        force_refresh = str(request.args.get("refresh", "false")).lower() == "true"
+        catalog = get_room_catalog(force_refresh=force_refresh)
+        return jsonify(
+            {
+                "rooms": catalog.get("rooms", []),
+                "fetched_at": catalog.get("fetched_at"),
+            }
+        )
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Failed to fetch rooms catalog: {str(e)}"}), 502
+    except Exception as e:
+        return jsonify({"error": f"Failed to parse rooms catalog: {str(e)}"}), 500
+
+
 @app.route("/api/book", methods=["POST"])
 @optional_auth(auth_manager)
 def book_room():
     data = request.json
     print(f"Received booking request: {data}")
+
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid JSON body"}), 400
 
     if request.current_user:
         if not data.get("firstName"):
@@ -452,6 +695,25 @@ def book_room():
     except (ValueError, TypeError):
         return jsonify({"error": "Duration must be a positive integer (hours)"}), 400
 
+    # Resolve requested room inputs (clean room numbers and/or internal room IDs)
+    try:
+        room_catalog = get_room_catalog()
+        room_preferences = normalize_room_preferences(data, room_catalog)
+    except Exception as e:
+        return jsonify({"error": f"Failed to resolve room preferences: {str(e)}"}), 500
+
+    if room_preferences["invalid_inputs"]:
+        return (
+            jsonify(
+                {
+                    "error": "Invalid room preferences provided",
+                    "invalid": room_preferences["invalid_inputs"],
+                    "hint": "Use room numbers (e.g. 342) or internal IDs from /api/rooms",
+                }
+            ),
+            400,
+        )
+
     # Get room availability using the existing function
     slots_by_room = get_room_availability(data["date"])
 
@@ -480,7 +742,11 @@ def book_room():
 
     # Find consecutive slots for the requested duration
     target_slots = find_consecutive_slots(
-        slots_by_room, start_time, duration_hours, data["date"]
+        slots_by_room,
+        start_time,
+        duration_hours,
+        data["date"],
+        preferred_room_ids=room_preferences["resolved_room_ids"],
     )
 
     if not target_slots:
@@ -571,12 +837,32 @@ def book_room():
     if duration_hours > 1:
         second_slot = target_slots[1]
         first_booking = all_bookings[0]
+
+        update_checksum = get_update_checksum_for_target_end(
+            first_booking, second_slot["end"]
+        )
+        if not update_checksum:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Could not determine update checksum for second-hour extension from booking options.",
+                        "details": {
+                            "option_checksums_count": len(
+                                first_booking.get("optionChecksums") or []
+                            ),
+                            "options_count": len(first_booking.get("options") or []),
+                        },
+                    }
+                ),
+                409,
+            )
         
         # Use update URL instead of add URL for the second slot
         update_url = f"{BASE_URL}/spaces/availability/booking/add"
         update_payload = {
             "update[id]": first_booking["id"],
-            "update[checksum]": first_booking['optionChecksums'][1],
+            "update[checksum]": update_checksum,
             "update[end]": second_slot["end"].split(" ")[0] + " " + second_slot["end"].split(" ")[1][:8],  # Include seconds
             "lid": LID,
             "gid": GID,
@@ -727,6 +1013,8 @@ def create_monitoring_request():
     This replaces the old background monitoring with database-stored requests.
     """
     data = request.json
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid JSON body"}), 400
 
     # If user is authenticated, use their info and ID
     user_id = None
@@ -768,6 +1056,24 @@ def create_monitoring_request():
     except (ValueError, TypeError):
         return jsonify({"error": "Duration must be a positive integer (hours)"}), 400
 
+    try:
+        room_catalog = get_room_catalog()
+        room_preferences = normalize_room_preferences(data, room_catalog)
+    except Exception as e:
+        return jsonify({"error": f"Failed to resolve room preferences: {str(e)}"}), 500
+
+    if room_preferences["invalid_inputs"]:
+        return (
+            jsonify(
+                {
+                    "error": "Invalid room preferences provided",
+                    "invalid": room_preferences["invalid_inputs"],
+                    "hint": "Use room numbers (e.g. 342) or internal IDs from /api/rooms",
+                }
+            ),
+            400,
+        )
+
     # Calculate end time from start time and duration
     try:
         start_time = normalize_start_time(data["startTime"])
@@ -788,7 +1094,11 @@ def create_monitoring_request():
         start_time=start_time,
         end_time=end_time,
         duration_hours=duration_hours,
-        room_preference=data.get("roomPreference"),
+        room_preference=room_preferences["resolved_room_ids"][0]
+        if room_preferences["resolved_room_ids"]
+        else None,
+        room_preferences=room_preferences["resolved_room_ids"],
+        room_preference_labels=room_preferences["resolved_labels"],
     )
 
     if result["success"]:
@@ -797,6 +1107,8 @@ def create_monitoring_request():
                 {
                     "success": True,
                     "request_id": result["request_id"],
+                    "room_preferences": room_preferences["resolved_room_ids"],
+                    "room_preference_labels": room_preferences["resolved_labels"],
                     "message": f"Monitoring request created for {data['date']} {start_time}-{end_time} ({duration_hours} hours). Use external scheduler to check periodically.",
                 }
             ),
@@ -870,15 +1182,8 @@ def check_and_book_for_request(request_id):
             booking_data["startTime"],
             booking_data["duration"],
             booking_data["date"],
+            preferred_room_ids=get_request_room_preferences(request_doc),
         )
-
-        # Apply room preference filter if specified
-        if request_doc.get("room_preference") and target_slots:
-            target_slots = [
-                slot
-                for slot in target_slots
-                if str(slot["itemId"]) == str(request_doc["room_preference"])
-            ]
 
         # Update check count
         monitoring_manager.update_monitoring_status(request_id, "active")
@@ -972,12 +1277,29 @@ def check_and_book_for_request(request_id):
         if duration_hours > 1:
             second_slot = target_slots[1]
             first_booking = all_bookings[0]
+
+            update_checksum = get_update_checksum_for_target_end(
+                first_booking, second_slot["end"]
+            )
+            if not update_checksum:
+                error_msg = "Could not determine update checksum for second-hour extension from booking options."
+                monitoring_manager.update_monitoring_status(
+                    request_id, "error", error_message=error_msg
+                )
+                return jsonify(
+                    {
+                        "success": False,
+                        "available": True,
+                        "booked": False,
+                        "message": error_msg,
+                    }
+                )
             
             # Use update URL instead of add URL for the second slot
             update_url = f"{BASE_URL}/spaces/availability/booking/add"
             update_payload = {
                 "update[id]": first_booking["id"],
-                "update[checksum]": first_booking['optionChecksums'][1],
+                "update[checksum]": update_checksum,
                 "update[end]": second_slot["end"].split(" ")[0] + " " + second_slot["end"].split(" ")[1][:8],  # Include seconds
                 "lid": LID,
                 "gid": GID,
@@ -1288,15 +1610,8 @@ def check_all_monitoring_requests():
                 booking_data["startTime"],
                 booking_data["duration"],
                 booking_data["date"],
+                preferred_room_ids=get_request_room_preferences(request_doc),
             )
-
-            # Apply room preference filter if specified
-            if request_doc.get("room_preference") and target_slots:
-                target_slots = [
-                    slot
-                    for slot in target_slots
-                    if str(slot["itemId"]) == str(request_doc["room_preference"])
-                ]
 
             # Update check count
             monitoring_manager.update_monitoring_status(request_id, "active")
@@ -1394,12 +1709,30 @@ def check_all_monitoring_requests():
             if duration_hours > 1:
                 second_slot = target_slots[1]
                 first_booking = all_bookings[0]
+
+                update_checksum = get_update_checksum_for_target_end(
+                    first_booking, second_slot["end"]
+                )
+                if not update_checksum:
+                    error_msg = "Could not determine update checksum for second-hour extension from booking options."
+                    monitoring_manager.update_monitoring_status(
+                        request_id, "error", error_message=error_msg
+                    )
+                    result = {
+                        "request_id": request_id,
+                        "success": False,
+                        "available": True,
+                        "booked": False,
+                        "message": error_msg,
+                    }
+                    results.append(result)
+                    continue
                 
                 # Use update URL instead of add URL for the second slot
                 update_url = f"{BASE_URL}/spaces/availability/booking/add"
                 update_payload = {
                     "update[id]": first_booking["id"],
-                    "update[checksum]": first_booking['optionChecksums'][1],
+                    "update[checksum]": update_checksum,
                     "update[end]": second_slot["end"].split(" ")[0] + " " + second_slot["end"].split(" ")[1][:8],  # Include seconds
                     "lid": LID,
                     "gid": GID,
